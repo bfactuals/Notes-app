@@ -1,0 +1,13 @@
+{
+  "versionCode": 1,
+  "latestVersion": "1.0",
+  "minVersion": "1.0",
+  "title": "Update Available",
+  "updateMessage": "A new version of Veil Notes is ready.",
+  "forceUpdate": false,
+  "whatsNew": [
+    "Initial release of Veil Notes"
+  ],
+  "updateUrl": "",
+  "sha256": ""
+}
