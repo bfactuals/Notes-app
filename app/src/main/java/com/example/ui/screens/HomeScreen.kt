@@ -1,5 +1,13 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
@@ -18,7 +26,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -49,7 +58,10 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -74,13 +86,15 @@ import com.example.data.DoodleStrokeData
 import com.example.data.NoteEntity
 import com.example.data.NoteExtrasCodec
 import com.example.data.NoteImageHelper
-import android.content.ClipboardManager
-import android.content.Context
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.data.RemoteConfigValidator
 import com.example.ui.components.ArchiveUndoToast
 import com.example.ui.components.ClipboardQuickSavePill
+import com.example.ui.components.GitHubStarNudgeCard
+import com.example.ui.components.HomeAnnouncementBanner
 import com.example.ui.components.HomeSelectionTopBar
 import com.example.ui.components.LabelManagerDialog
 import com.example.ui.components.NoteBackgroundPatternOverlay
@@ -96,8 +110,10 @@ import com.example.ui.components.drawNormalizedStrokes
 import com.example.ui.components.extractDoodleCount
 import com.example.ui.components.formatCountdownBadge
 import com.example.ui.components.formatReminderChip
+import com.example.ui.components.isReminderPast
 import com.example.ui.components.matchesSmartCategory
 import com.example.ui.components.migrateLegacyMarkdownIfNeeded
+import com.example.ui.components.openSafeExternalUrl
 import com.example.ui.components.stripDoodleMarkers
 import com.example.ui.components.tactilePress
 import com.example.ui.theme.VeilEasing
@@ -151,8 +167,20 @@ fun HomeScreen(
   val enableSharing by viewModel.enableSharing.collectAsState()
   val moveTickedToBottom by viewModel.moveTickedToBottom.collectAsState()
   val proFeatures by viewModel.proFeatures.collectAsState()
+  val remoteConfig by viewModel.remoteConfig.collectAsState()
+  val dismissedAnnouncementHash by viewModel.dismissedAnnouncementHash.collectAsState()
+  val totalNotesCreated by viewModel.totalNotesCreated.collectAsState()
+  val starNudgeDismissed by viewModel.starNudgeDismissed.collectAsState()
 
   var themeButtonCenter by remember { mutableStateOf(Offset.Unspecified) }
+
+  // Strictly clear any stale multi-select state whenever Home is entered/composed or Back is pressed while selecting
+  LaunchedEffect(Unit) {
+    viewModel.clearSelection()
+  }
+  BackHandler(enabled = selectedIds.isNotEmpty()) {
+    viewModel.clearSelection()
+  }
 
   // Smart Auto-Categories filter state (reset when feature is toggled OFF)
   var selectedCategory by remember { mutableStateOf(NoteSmartCategory.ALL) }
@@ -228,6 +256,9 @@ fun HomeScreen(
     archived: List<NoteEntity> = emptyList(),
     durationMs: Long = if (archived.isNotEmpty()) 5000L else 2600L
   ) {
+    // Never allow Clipboard pill and toast to overlap on screen
+    clipboardDismissJob?.cancel()
+    clipboardOfferText = null
     toastDismissJob?.cancel()
     val key = System.currentTimeMillis()
     toastState = ToastState(
@@ -241,6 +272,19 @@ fun HomeScreen(
       if (toastState?.key == key) {
         toastState = null
       }
+    }
+  }
+
+  var pendingBulkReminder by remember { mutableStateOf<Pair<List<NoteEntity>, Long>?>(null) }
+  val notificationPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { _ ->
+    val pending = pendingBulkReminder
+    pendingBulkReminder = null
+    if (pending != null) {
+      viewModel.updateNotesReminder(pending.first, pending.second)
+      viewModel.clearSelection()
+      showTransientToast("Reminder set")
     }
   }
 
@@ -335,6 +379,7 @@ fun HomeScreen(
   var draggingNoteId by remember { mutableStateOf<Long?>(null) }
   var draggingIsPinned by remember { mutableStateOf(false) }
   var dragOffset by remember { mutableStateOf(Offset.Zero) }
+  var longPressStartedSelection by remember { mutableStateOf(false) }
   var livePinnedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
   var liveOtherIds by remember { mutableStateOf<List<Long>>(emptyList()) }
   val itemBounds = remember { mutableStateMapOf<Long, Rect>() }
@@ -384,9 +429,18 @@ fun HomeScreen(
       currentReminderTime = firstRem,
       onDismiss = { showSelectionReminderDialog = false },
       onSetReminder = { ts ->
-        viewModel.updateNotesReminder(selectedNotes, ts)
         showSelectionReminderDialog = false
-        viewModel.clearSelection()
+        val targets = selectedNotes.toList()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+          pendingBulkReminder = targets to ts
+          notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+          viewModel.updateNotesReminder(targets, ts)
+          viewModel.clearSelection()
+          showTransientToast("Reminder set")
+        }
       },
       onClearReminder = {
         viewModel.updateNotesReminder(selectedNotes, 0L)
@@ -782,6 +836,35 @@ fun HomeScreen(
           )
         }
 
+        // Dismissible Remote Announcement Banner (controlled by config.json announcements)
+        val announcement = remoteConfig.announcements
+        val showAnnouncementBanner = selectedIds.isEmpty() &&
+          announcement.isDisplayable &&
+          dismissedAnnouncementHash != announcement.contentHash
+        HomeAnnouncementBanner(
+          announcement = announcement,
+          visible = showAnnouncementBanner,
+          onOpenLink = { url -> openSafeExternalUrl(context, url) },
+          onDismiss = { viewModel.dismissAnnouncement(announcement.contentHash) }
+        )
+
+        // Smart GitHub Star Nudge Card — shown ONLY ONCE ever after the user creates their 5th note
+        val githubRepoUrl = remoteConfig.socialLinks.githubRepo
+        val showStarNudge = selectedIds.isEmpty() &&
+          totalNotesCreated >= 5 &&
+          !starNudgeDismissed &&
+          RemoteConfigValidator.isValidHttpsUrl(githubRepoUrl)
+        GitHubStarNudgeCard(
+          visible = showStarNudge,
+          onStarNow = {
+            viewModel.dismissStarNudge()
+            openSafeExternalUrl(context, githubRepoUrl)
+          },
+          onMaybeLater = {
+            viewModel.dismissStarNudge()
+          }
+        )
+
         // Active Reminders / Label filter indicator pill
         if (currentDrawerScreen == "reminders" || selectedLabelFilter != null || currentDrawerScreen == "labels") {
           Row(
@@ -929,6 +1012,7 @@ fun HomeScreen(
                     isDragging = isDraggingThis,
                     dragOffset = dragOffsetForCard,
                     swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
+                    canStartDrag = selectedIds.size <= 1,
                     moveTickedToBottom = moveTickedToBottom,
                     showSelfDestructBadge = proFeatures.selfDestructEnabled,
                     onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
@@ -941,12 +1025,20 @@ fun HomeScreen(
                       viewModel.archiveNote(note)
                       showTransientToast("Archived", archived = listOf(note))
                     },
-                    onLongPressDragStart = {
+                    onLongPressSelect = {
                       haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                      longPressStartedSelection = selectedIds.isEmpty()
+                      viewModel.toggleNoteSelection(note.id)
+                    },
+                    onLongPressDragStart = { initialOffset ->
+                      if (longPressStartedSelection) {
+                        viewModel.clearSelection()
+                        longPressStartedSelection = false
+                      }
                       livePinnedIds = pinnedNotes.map { it.id }
                       draggingNoteId = note.id
                       draggingIsPinned = true
-                      dragOffset = Offset.Zero
+                      dragOffset = initialOffset
                     },
                     onLongPressDrag = { delta ->
                       dragOffset += delta
@@ -972,14 +1064,13 @@ fun HomeScreen(
                         }
                       }
                     },
-                    onLongPressDragEnd = { moved ->
-                      if (!moved) {
-                        viewModel.toggleNoteSelection(note.id)
-                      } else {
+                    onLongPressDragEnd = { commitOrder ->
+                      if (commitOrder) {
                         viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
                       }
                       draggingNoteId = null
                       dragOffset = Offset.Zero
+                      longPressStartedSelection = false
                     }
                   )
                 }
@@ -1012,6 +1103,7 @@ fun HomeScreen(
                     isDragging = isDraggingThis,
                     dragOffset = dragOffsetForCard,
                     swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
+                    canStartDrag = selectedIds.size <= 1,
                     moveTickedToBottom = moveTickedToBottom,
                     showSelfDestructBadge = proFeatures.selfDestructEnabled,
                     onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
@@ -1024,12 +1116,20 @@ fun HomeScreen(
                       viewModel.archiveNote(note)
                       showTransientToast("Archived", archived = listOf(note))
                     },
-                    onLongPressDragStart = {
+                    onLongPressSelect = {
                       haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                      longPressStartedSelection = selectedIds.isEmpty()
+                      viewModel.toggleNoteSelection(note.id)
+                    },
+                    onLongPressDragStart = { initialOffset ->
+                      if (longPressStartedSelection) {
+                        viewModel.clearSelection()
+                        longPressStartedSelection = false
+                      }
                       liveOtherIds = otherNotes.map { it.id }
                       draggingNoteId = note.id
                       draggingIsPinned = false
-                      dragOffset = Offset.Zero
+                      dragOffset = initialOffset
                     },
                     onLongPressDrag = { delta ->
                       dragOffset += delta
@@ -1055,14 +1155,13 @@ fun HomeScreen(
                         }
                       }
                     },
-                    onLongPressDragEnd = { moved ->
-                      if (!moved) {
-                        viewModel.toggleNoteSelection(note.id)
-                      } else {
+                    onLongPressDragEnd = { commitOrder ->
+                      if (commitOrder) {
                         viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
                       }
                       draggingNoteId = null
                       dragOffset = Offset.Zero
+                      longPressStartedSelection = false
                     }
                   )
                 }
@@ -1093,7 +1192,7 @@ fun HomeScreen(
           .padding(bottom = 104.dp)
       )
 
-      // 5-second Floating Clipboard Quick-Save Pill (hidden when disabled or when Undo toast is visible)
+      // 5-second Floating Clipboard Quick-Save Pill (strictly never overlaps confirmation toast or clicks through)
       val currentClipOffer = clipboardOfferText
       ClipboardQuickSavePill(
         visible = proFeatures.clipboardPillEnabled && currentClipOffer != null && currentToast == null,
@@ -1103,7 +1202,10 @@ fun HomeScreen(
           val textToSave = clipboardOfferText.orEmpty()
           clipboardOfferText = null
           viewModel.quickSaveClipboardNote(textToSave)
-          showTransientToast("Saved copied text as note")
+          scope.launch {
+            delay(180L)
+            showTransientToast("Note saved from clipboard")
+          }
         },
         onDismiss = {
           clipboardDismissJob?.cancel()
@@ -1136,22 +1238,28 @@ private fun InteractiveHomeNoteCard(
   isDragging: Boolean,
   dragOffset: Offset,
   swipeEnabled: Boolean,
+  canStartDrag: Boolean,
   moveTickedToBottom: Boolean,
   showSelfDestructBadge: Boolean,
   onBoundsMeasured: (Rect) -> Unit,
   onClick: () -> Unit,
   onSwipeArchive: () -> Unit,
-  onLongPressDragStart: () -> Unit,
+  onLongPressSelect: () -> Unit,
+  onLongPressDragStart: (initialOffset: Offset) -> Unit,
   onLongPressDrag: (Offset) -> Unit,
-  onLongPressDragEnd: (moved: Boolean) -> Unit
+  onLongPressDragEnd: (commitOrder: Boolean) -> Unit
 ) {
   val colors = VeilThemeTokens.colors
   val reduceMotion = VeilThemeTokens.reduceMotion
   val cardShape = RoundedCornerShape(16.dp)
 
+  val latestSwipeEnabled by rememberUpdatedState(swipeEnabled)
+  val latestCanStartDrag by rememberUpdatedState(canStartDrag)
   val dismissState = rememberSwipeToDismissBoxState(
     confirmValueChange = { value ->
-      if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
+      if (!latestSwipeEnabled) {
+        false
+      } else if (value == SwipeToDismissBoxValue.StartToEnd || value == SwipeToDismissBoxValue.EndToStart) {
         onSwipeArchive()
         true
       } else {
@@ -1160,6 +1268,7 @@ private fun InteractiveHomeNoteCard(
     }
   )
 
+  val latestOnLongPressSelect by rememberUpdatedState(onLongPressSelect)
   val latestOnDragStart by rememberUpdatedState(onLongPressDragStart)
   val latestOnDrag by rememberUpdatedState(onLongPressDrag)
   val latestOnDragEnd by rememberUpdatedState(onLongPressDragEnd)
@@ -1178,89 +1287,16 @@ private fun InteractiveHomeNoteCard(
     label = "card_press_scale"
   )
 
-  val cardBody: @Composable () -> Unit = {
-    val cardBg = colors.noteCardColor(note.color)
-    val extras = remember(note.checklistJson) { NoteExtrasCodec.decode(note.checklistJson) }
+  val cardBg = colors.noteCardColor(note.color)
+  val extras = remember(note.checklistJson) { NoteExtrasCodec.decode(note.checklistJson) }
 
-    Box(
-      modifier = Modifier
-        .fillMaxWidth()
-        .onGloballyPositioned { coords ->
-          if (!isDragging) {
-            onBoundsMeasured(coords.boundsInRoot())
-          }
-        }
-        .graphicsLayer {
-          translationX = dragOffset.x
-          translationY = dragOffset.y
-          scaleX = dragScale * pressScale
-          scaleY = dragScale * pressScale
-        }
-        .shadow(
-          elevation = if (isDragging) 14.dp else 2.dp,
-          shape = cardShape,
-          ambientColor = colors.shadow,
-          spotColor = colors.shadow
-        )
-        .clip(cardShape)
-        .background(cardBg)
-        .then(
-          if (isSelected || isDragging) {
-            Modifier.border(2.dp, colors.accent, cardShape)
-          } else {
-            Modifier
-          }
-        )
-        .pointerInput(note.id) {
-          var totalDist = 0f
-          detectDragGesturesAfterLongPress(
-            onDragStart = {
-              totalDist = 0f
-              latestOnDragStart()
-            },
-            onDrag = { change, dragAmount ->
-              change.consume()
-              totalDist += dragAmount.getDistance()
-              latestOnDrag(dragAmount)
-            },
-            onDragEnd = {
-              latestOnDragEnd(totalDist > 22f)
-            },
-            onDragCancel = {
-              latestOnDragEnd(false)
-            }
-          )
-        }
-        .clickable(
-          interactionSource = interactionSource,
-          indication = ripple(),
-          onClick = onClick
-        )
-        .testTag("note_card_${note.id}")
-    ) {
-      NoteBackgroundPatternOverlay(
-        pattern = extras.backgroundPattern,
-        tint = colors.text,
-        alphaScale = 0.9f,
-        modifier = Modifier.matchParentSize()
-      )
-      Box(modifier = Modifier.padding(14.dp)) {
-        NoteCardContent(
-          note = note,
-          isHiddenStyle = false,
-          moveTickedToBottom = moveTickedToBottom,
-          showSelfDestructBadge = showSelfDestructBadge
-        )
-      }
-    }
-  }
-
-  if (swipeEnabled) {
-    SwipeToDismissBox(
-      state = dismissState,
-      enableDismissFromStartToEnd = true,
-      enableDismissFromEndToStart = true,
-      backgroundContent = {
+  // Keep SwipeToDismissBox ALWAYS mounted so toggling swipeEnabled never unmounts pointerInput mid-gesture.
+  SwipeToDismissBox(
+    state = dismissState,
+    enableDismissFromStartToEnd = swipeEnabled,
+    enableDismissFromEndToStart = swipeEnabled,
+    backgroundContent = {
+      if (swipeEnabled) {
         val dir = dismissState.dismissDirection
         val align = if (dir == SwipeToDismissBoxValue.EndToStart) Alignment.CenterEnd else Alignment.CenterStart
         val iconScale by animateFloatAsState(
@@ -1285,12 +1321,124 @@ private fun InteractiveHomeNoteCard(
             VeilIcons.Archive(tint = colors.accent, size = 22.dp)
           }
         }
-      },
-      content = { cardBody() }
-    )
-  } else {
-    cardBody()
-  }
+      }
+    },
+    content = {
+      Box(
+        modifier = Modifier
+          .fillMaxWidth()
+          .onGloballyPositioned { coords ->
+            if (!isDragging) {
+              onBoundsMeasured(coords.boundsInRoot())
+            }
+          }
+          .graphicsLayer {
+            translationX = dragOffset.x
+            translationY = dragOffset.y
+            scaleX = dragScale * pressScale
+            scaleY = dragScale * pressScale
+          }
+          .shadow(
+            elevation = if (isDragging) 14.dp else 2.dp,
+            shape = cardShape,
+            ambientColor = colors.shadow,
+            spotColor = colors.shadow
+          )
+          .clip(cardShape)
+          .background(cardBg)
+          .then(
+            if (isSelected || isDragging) {
+              Modifier.border(2.dp, colors.accent, cardShape)
+            } else {
+              Modifier
+            }
+          )
+          // clickable BEFORE pointerInput so inner pointerInput consumes UP after a 400ms long-press
+          // without firing onClick, while normal taps (<400ms) pass cleanly through to clickable.
+          .clickable(
+            enabled = !isDragging,
+            interactionSource = interactionSource,
+            indication = ripple(),
+            onClick = onClick
+          )
+          .pointerInput(note.id) {
+            val touchSlop = viewConfiguration.touchSlop
+            val reorderThreshold = maxOf(touchSlop * 1.6f, 28.dp.toPx())
+            awaitEachGesture {
+              val down = awaitFirstDown(requireUnconsumed = false)
+              val downId = down.id
+              val downPos = down.position
+
+              // Phase 1: Wait ~400ms while stationary for Long-Press
+              var cancelledBeforeLongPress = false
+              val timedOut = withTimeoutOrNull(400L) {
+                while (true) {
+                  val event = awaitPointerEvent(PointerEventPass.Main)
+                  val change = event.changes.firstOrNull { it.id == downId }
+                  if (change == null || !change.pressed || change.changedToUpIgnoreConsumed()) {
+                    cancelledBeforeLongPress = true
+                    break
+                  }
+                  if (change.isConsumed || (change.position - downPos).getDistance() > touchSlop) {
+                    cancelledBeforeLongPress = true
+                    break
+                  }
+                }
+              } == null
+
+              if (!timedOut || cancelledBeforeLongPress) {
+                return@awaitEachGesture
+              }
+
+              // Phase 2: Stationary 400ms Long-Press confirmed -> haptic + select immediately
+              latestOnLongPressSelect()
+
+              // Phase 3: Track release (stays selected) vs active drag past threshold (starts reorder)
+              var dragStarted = false
+              try {
+                while (true) {
+                  val event = awaitPointerEvent(PointerEventPass.Main)
+                  val change = event.changes.firstOrNull { it.id == downId } ?: break
+                  if (!change.pressed || change.changedToUpIgnoreConsumed()) {
+                    change.consume()
+                    break
+                  }
+                  val delta = change.positionChange()
+                  change.consume()
+                  val distFromDown = (change.position - downPos).getDistance()
+                  if (!dragStarted && distFromDown > reorderThreshold && latestCanStartDrag) {
+                    dragStarted = true
+                    latestOnDragStart(change.position - downPos)
+                  } else if (dragStarted && delta != Offset.Zero) {
+                    latestOnDrag(delta)
+                  }
+                }
+              } finally {
+                if (dragStarted) {
+                  latestOnDragEnd(true)
+                }
+              }
+            }
+          }
+          .testTag("note_card_${note.id}")
+      ) {
+        NoteBackgroundPatternOverlay(
+          pattern = extras.backgroundPattern,
+          tint = colors.text,
+          alphaScale = 0.9f,
+          modifier = Modifier.matchParentSize()
+        )
+        Box(modifier = Modifier.padding(14.dp)) {
+          NoteCardContent(
+            note = note,
+            isHiddenStyle = false,
+            moveTickedToBottom = moveTickedToBottom,
+            showSelfDestructBadge = showSelfDestructBadge
+          )
+        }
+      }
+    }
+  )
 }
 
 @Composable
@@ -1581,20 +1729,29 @@ private fun NoteCardContent(
     }
 
     if (reminderLabel.isNotEmpty()) {
+      val reminderPast = isReminderPast(note.reminderTime)
+      val chipTint = if (reminderPast) colors.muted else colors.accent
+      val chipBg = when {
+        reminderPast -> colors.bg.copy(alpha = 0.55f)
+        isHiddenStyle -> colors.surface
+        else -> colors.accentSoft
+      }
       Spacer(modifier = Modifier.height(8.dp))
       Row(
         modifier = Modifier
           .clip(RoundedCornerShape(10.dp))
-          .background(if (isHiddenStyle) colors.surface else colors.accentSoft)
+          .background(chipBg)
           .padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
       ) {
-        VeilIcons.Bell(tint = colors.accent, size = 12.dp)
+        VeilIcons.Bell(tint = chipTint, size = 12.dp)
         Text(
-          text = reminderLabel,
-          style = VeilTextStyles.labelChip,
-          color = colors.accent,
+          text = if (reminderPast) "Past · $reminderLabel" else reminderLabel,
+          style = VeilTextStyles.labelChip.copy(
+            textDecoration = if (reminderPast) TextDecoration.LineThrough else TextDecoration.None
+          ),
+          color = chipTint,
           maxLines = 1,
           overflow = TextOverflow.Ellipsis
         )

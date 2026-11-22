@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -98,6 +99,7 @@ import com.example.ui.components.evaluateInlineMathIfTriggered
 import com.example.ui.components.findMatchRanges
 import com.example.ui.components.formatCountdownBadge
 import com.example.ui.components.formatReminderChip
+import com.example.ui.components.isReminderPast
 import com.example.ui.components.lineIndicesForSelection
 import com.example.ui.components.migrateLegacyMarkdownIfNeeded
 import com.example.ui.components.stripDoodleMarkers
@@ -159,21 +161,6 @@ fun NoteEditorScreen(
   var versionHistory by remember { mutableStateOf<List<NoteVersionSnapshot>>(emptyList()) }
   var showVersionHistoryDialog by remember { mutableStateOf(false) }
 
-  LaunchedEffect(expiresAt) {
-    if (expiresAt > 0L) {
-      while (true) {
-        val now = System.currentTimeMillis()
-        nowTick = now
-        if (expiresAt <= now) {
-          note?.let { viewModel.deletePermanently(it) }
-          onBack()
-          break
-        }
-        delay(30_000L)
-      }
-    }
-  }
-
   // Text Undo / Redo stacks
   var textUndoStack by remember { mutableStateOf<List<TextHistorySnapshot>>(emptyList()) }
   var textRedoStack by remember { mutableStateOf<List<TextHistorySnapshot>>(emptyList()) }
@@ -188,6 +175,21 @@ fun NoteEditorScreen(
   var isHidden by remember { mutableStateOf(false) }
   var assignedLabels by remember { mutableStateOf<Set<String>>(emptySet()) }
   var reminderTime by remember { mutableLongStateOf(0L) }
+
+  LaunchedEffect(expiresAt, reminderTime) {
+    if (expiresAt > 0L || reminderTime > 0L) {
+      while (true) {
+        val now = System.currentTimeMillis()
+        nowTick = now
+        if (expiresAt > 0L && expiresAt <= now) {
+          note?.let { viewModel.deletePermanently(it) }
+          onBack()
+          break
+        }
+        delay(30_000L)
+      }
+    }
+  }
 
   // Multi-image attachments & full-screen viewer + OCR state
   var imagePaths by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -529,6 +531,44 @@ fun NoteEditorScreen(
     if (hasPerm) launchVoiceDictation() else audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
   }
 
+  // Android 13+ POST_NOTIFICATIONS runtime permission for real native reminders
+  var pendingReminderTs by remember { mutableStateOf<Long?>(null) }
+  val notificationPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    val ts = pendingReminderTs
+    pendingReminderTs = null
+    if (ts != null) {
+      reminderTime = ts
+      nowTick = System.currentTimeMillis()
+      scope.launch {
+        snackbarHostState.showSnackbar(
+          if (granted) "Reminder set for ${formatReminderChip(ts)}."
+          else "Reminder saved. Enable notifications in Settings for alerts."
+        )
+      }
+    }
+  }
+
+  fun applyReminderWithPermission(ts: Long) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      val hasPerm = ContextCompat.checkSelfPermission(
+        context,
+        Manifest.permission.POST_NOTIFICATIONS
+      ) == PackageManager.PERMISSION_GRANTED
+      if (!hasPerm) {
+        pendingReminderTs = ts
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        return
+      }
+    }
+    reminderTime = ts
+    nowTick = System.currentTimeMillis()
+    scope.launch {
+      snackbarHostState.showSnackbar("Reminder set for ${formatReminderChip(ts)}.")
+    }
+  }
+
   // Load existing note or initialize new mode (migrates any legacy Markdown symbols cleanly to WYSIWYG)
   LaunchedEffect(noteId, initialMode) {
     if (noteId != 0L) {
@@ -706,8 +746,8 @@ fun NoteEditorScreen(
       currentReminderTime = reminderTime,
       onDismiss = { showReminderDialog = false },
       onSetReminder = { ts ->
-        reminderTime = ts
         showReminderDialog = false
+        applyReminderWithPermission(ts)
       },
       onClearReminder = {
         reminderTime = 0L
@@ -754,6 +794,8 @@ fun NoteEditorScreen(
   }
 
   val screenBg = if (color == "plain" || color == "white") colors.bg else colors.noteCardColor(color)
+  val tonalSurfaceColor = colors.noteTonalColor(color)
+  val sheetSurfaceColor = colors.noteSheetColor(color)
   val wysiwygTransformation = remember(
     richSpans, lineHeadings, colors.highlight, colors.muted, colors.accent, findQuery, activeFindIndex, showFindBar
   ) {
@@ -789,12 +831,10 @@ fun NoteEditorScreen(
     }
   }
 
-  val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-  val effectiveTopPadding = if (statusBarTop > 44.dp) statusBarTop + 12.dp else 56.dp
-  val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
   val density = LocalDensity.current
   val slideOffsetPx = with(density) { 24.dp.roundToPx() }
   val reminderLabel = remember(reminderTime) { formatReminderChip(reminderTime) }
+  val reminderIsPast = remember(reminderTime, nowTick) { isReminderPast(reminderTime, nowTick) }
   val scrollState = rememberScrollState()
 
   val orderedChecklist = remember(checklistItems, moveTickedToBottom) {
@@ -809,7 +849,16 @@ fun NoteEditorScreen(
 
   Scaffold(
     containerColor = screenBg,
-    snackbarHost = { SnackbarHost(snackbarHostState) }
+    contentWindowInsets = WindowInsets(0, 0, 0, 0),
+    snackbarHost = {
+      SnackbarHost(
+        hostState = snackbarHostState,
+        modifier = Modifier
+          .navigationBarsPadding()
+          .imePadding()
+          .padding(bottom = 64.dp)
+      )
+    }
   ) { _ ->
     Box(
       modifier = Modifier
@@ -833,11 +882,13 @@ fun NoteEditorScreen(
       )
 
       Column(modifier = Modifier.fillMaxSize()) {
-        // Minimalist Top Bar: Back | [Subtle Undo/Redo when editing OR Read Mode pill] | Pin (1.5s stealth vault hold)
+        // Minimalist Top Bar using statusBarsPadding() so Title is NEVER clipped when keyboard opens.
+        // Top-right action buttons (Undo, Redo, Pin) sit in soft paired tonal rounded-square containers.
         Row(
           modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, top = effectiveTopPadding, bottom = 4.dp),
+            .statusBarsPadding()
+            .padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 6.dp),
           verticalAlignment = Alignment.CenterVertically
         ) {
           IconButton(
@@ -864,13 +915,13 @@ fun NoteEditorScreen(
           ) {
             Row(
               modifier = Modifier
-                .padding(end = 6.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(colors.accentSoft)
+                .padding(end = 8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(tonalSurfaceColor)
                 .tactilePress(scaleDown = 0.94f, hapticOnClick = true) {
                   isReadOnlyMode = false
                 }
-                .padding(horizontal = 10.dp, vertical = 6.dp)
+                .padding(horizontal = 10.dp, vertical = 7.dp)
                 .testTag("read_mode_indicator_pill"),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -880,7 +931,7 @@ fun NoteEditorScreen(
             }
           }
 
-          // Subtle Text Undo & Redo buttons while actively editing text
+          // Paired tonal rounded-square Undo & Redo buttons while editing text
           AnimatedVisibility(
             visible = showTextUndoRedo,
             enter = fadeIn(tween(150)),
@@ -888,45 +939,55 @@ fun NoteEditorScreen(
           ) {
             Row(
               verticalAlignment = Alignment.CenterVertically,
-              horizontalArrangement = Arrangement.spacedBy(2.dp),
-              modifier = Modifier.padding(end = 4.dp)
+              horizontalArrangement = Arrangement.spacedBy(8.dp),
+              modifier = Modifier.padding(end = 8.dp)
             ) {
               val canUndoText = textUndoStack.isNotEmpty()
               val canRedoText = textRedoStack.isNotEmpty()
-              IconButton(
-                onClick = { performTextUndo() },
-                enabled = canUndoText,
+              Box(
                 modifier = Modifier
-                  .size(44.dp)
+                  .size(40.dp)
+                  .clip(RoundedCornerShape(12.dp))
+                  .background(if (canUndoText) tonalSurfaceColor else tonalSurfaceColor.copy(alpha = 0.45f))
+                  .tactilePress(scaleDown = 0.90f, enabled = canUndoText, hapticOnClick = false) {
+                    performTextUndo()
+                  }
                   .semantics { contentDescription = "Undo text edit" }
-                  .testTag("editor_text_undo_button")
+                  .testTag("editor_text_undo_button"),
+                contentAlignment = Alignment.Center
               ) {
                 VeilIcons.Undo(
                   tint = if (canUndoText) colors.text else colors.muted.copy(alpha = 0.35f),
-                  size = 20.dp
+                  size = 19.dp
                 )
               }
-              IconButton(
-                onClick = { performTextRedo() },
-                enabled = canRedoText,
+              Box(
                 modifier = Modifier
-                  .size(44.dp)
+                  .size(40.dp)
+                  .clip(RoundedCornerShape(12.dp))
+                  .background(if (canRedoText) tonalSurfaceColor else tonalSurfaceColor.copy(alpha = 0.45f))
+                  .tactilePress(scaleDown = 0.90f, enabled = canRedoText, hapticOnClick = false) {
+                    performTextRedo()
+                  }
                   .semantics { contentDescription = "Redo text edit" }
-                  .testTag("editor_text_redo_button")
+                  .testTag("editor_text_redo_button"),
+                contentAlignment = Alignment.Center
               ) {
                 VeilIcons.Redo(
                   tint = if (canRedoText) colors.text else colors.muted.copy(alpha = 0.35f),
-                  size = 20.dp
+                  size = 19.dp
                 )
               }
             }
           }
 
+          // Paired tonal rounded-square Pin button (preserving 1.5s stealth vault long-press hold!)
           val latestHidden by rememberUpdatedState(isHidden)
           Box(
             modifier = Modifier
-              .size(48.dp)
-              .clip(CircleShape)
+              .size(40.dp)
+              .clip(RoundedCornerShape(12.dp))
+              .background(if (isPinned) colors.accent else tonalSurfaceColor)
               .pointerInput(noteId) {
                 awaitEachGesture {
                   awaitFirstDown(requireUnconsumed = false)
@@ -953,8 +1014,8 @@ fun NoteEditorScreen(
             contentAlignment = Alignment.Center
           ) {
             VeilIcons.Pin(
-              tint = if (isPinned) colors.accent else colors.text,
-              size = 24.dp
+              tint = if (isPinned) androidx.compose.ui.graphics.Color.White else colors.text,
+              size = 20.dp
             )
           }
         }
@@ -990,13 +1051,13 @@ fun NoteEditorScreen(
           )
         }
 
-        // Scrollable Note Content (scroll locks automatically while resizing or sketching inline!)
+        // Scrollable Note Content — strictly bounded ABOVE the docked bottom bar & keyboard!
         Column(
           modifier = Modifier
             .weight(1f)
             .fillMaxWidth()
             .verticalScroll(state = scrollState, enabled = !isInlineGestureLocked)
-            .padding(horizontal = 20.dp, vertical = 8.dp)
+            .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
           // Responsive multi-image grid at the top of the note
           if (imagePaths.isNotEmpty()) {
@@ -1047,7 +1108,7 @@ fun NoteEditorScreen(
 
           Spacer(modifier = Modifier.height(14.dp))
 
-          // Active Self-Destruct Countdown, Reminder & Label chips
+          // Active Self-Destruct Countdown, Reminder (with Past styling) & Label chips using paired tonal color
           val countdownBadge = remember(expiresAt, nowTick, proFeatures.selfDestructEnabled) {
             if (proFeatures.selfDestructEnabled && expiresAt > nowTick) {
               formatCountdownBadge(expiresAt, nowTick)
@@ -1068,33 +1129,40 @@ fun NoteEditorScreen(
                   Row(
                     modifier = Modifier
                       .clip(RoundedCornerShape(10.dp))
-                      .background(colors.accentSoft)
-                      .border(1.dp, colors.accent.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                      .background(tonalSurfaceColor)
                       .tactilePress(scaleDown = 0.94f, hapticOnClick = true) {
                         activePanel = ActiveEditorPanel.TIMER
                       }
-                      .padding(horizontal = 8.dp, vertical = 4.dp)
+                      .padding(horizontal = 10.dp, vertical = 5.dp)
                       .testTag("editor_countdown_badge"),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                   ) {
-                    Text("⏱ $countdownBadge", style = VeilTextStyles.labelChip, color = colors.accent)
+                    Text("⏱ $countdownBadge", style = VeilTextStyles.labelChip, color = colors.text)
                   }
                 }
               }
               if (reminderLabel.isNotEmpty()) {
                 item {
+                  val remTint = if (reminderIsPast) colors.muted else colors.text
                   Row(
                     modifier = Modifier
                       .clip(RoundedCornerShape(10.dp))
-                      .background(colors.accentSoft)
+                      .background(if (reminderIsPast) tonalSurfaceColor.copy(alpha = 0.55f) else tonalSurfaceColor)
                       .tactilePress(scaleDown = 0.94f, hapticOnClick = true) { showReminderDialog = true }
-                      .padding(horizontal = 8.dp, vertical = 4.dp),
+                      .padding(horizontal = 10.dp, vertical = 5.dp)
+                      .testTag("editor_reminder_chip"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                   ) {
-                    VeilIcons.Bell(tint = colors.accent, size = 13.dp)
-                    Text(reminderLabel, style = VeilTextStyles.labelChip, color = colors.accent)
+                    VeilIcons.Bell(tint = remTint, size = 13.dp)
+                    Text(
+                      text = if (reminderIsPast) "Past · $reminderLabel" else reminderLabel,
+                      style = VeilTextStyles.labelChip.copy(
+                        textDecoration = if (reminderIsPast) TextDecoration.LineThrough else TextDecoration.None
+                      ),
+                      color = remTint
+                    )
                   }
                 }
               }
@@ -1102,11 +1170,11 @@ fun NoteEditorScreen(
                 Box(
                   modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .background(colors.accentSoft)
+                    .background(tonalSurfaceColor)
                     .tactilePress(scaleDown = 0.94f, hapticOnClick = true) { showLabelDialog = true }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
-                  Text(lbl, style = VeilTextStyles.labelChip, color = colors.accent)
+                  Text(lbl, style = VeilTextStyles.labelChip, color = colors.text)
                 }
               }
             }
@@ -1346,8 +1414,8 @@ fun NoteEditorScreen(
             }
           }
 
-          // Auto-Detected Clickable Link Chips (gives instant one-tap link opening in Edit Mode too)
-          if (detectedUrls.isNotEmpty() && !isReadOnlyMode) {
+          // Auto-Detected Clickable Link Chips with 1-tap Copy icon button using paired tonal color
+          if (detectedUrls.isNotEmpty()) {
             Spacer(modifier = Modifier.height(16.dp))
             LazyRow(
               modifier = Modifier
@@ -1360,325 +1428,362 @@ fun NoteEditorScreen(
                 Row(
                   modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
-                    .background(colors.accentSoft)
-                    .border(1.dp, colors.accent.copy(alpha = 0.35f), RoundedCornerShape(14.dp))
-                    .tactilePress(scaleDown = 0.94f, hapticOnClick = true) {
-                      openDetectedUrl(link.launchUrl)
-                    }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .background(tonalSurfaceColor)
+                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                  VeilIcons.LinkOutline(tint = colors.accent, size = 14.dp)
-                  Text(
-                    text = link.displayText,
-                    style = VeilTextStyles.labelChip,
-                    color = colors.accent,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 220.dp)
+                  Row(
+                    modifier = Modifier
+                      .clip(RoundedCornerShape(10.dp))
+                      .tactilePress(scaleDown = 0.95f, hapticOnClick = true) {
+                        openDetectedUrl(link.launchUrl)
+                      }
+                      .padding(vertical = 3.dp, horizontal = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                  ) {
+                    VeilIcons.LinkOutline(tint = colors.accent, size = 14.dp)
+                    Text(
+                      text = link.displayText,
+                      style = VeilTextStyles.labelChip,
+                      color = colors.text,
+                      maxLines = 1,
+                      overflow = TextOverflow.Ellipsis,
+                      modifier = Modifier.widthIn(max = 190.dp)
+                    )
+                  }
+
+                  Box(
+                    modifier = Modifier
+                      .width(1.dp)
+                      .height(16.dp)
+                      .background(colors.muted.copy(alpha = 0.25f))
                   )
+
+                  Box(
+                    modifier = Modifier
+                      .size(28.dp)
+                      .clip(CircleShape)
+                      .tactilePress(scaleDown = 0.88f, hapticOnClick = true, role = Role.Button) {
+                        NoteImageHelper.copyTextToClipboard(context, "Link", link.launchUrl)
+                        scope.launch {
+                          snackbarHostState.showSnackbar("Link copied")
+                        }
+                      }
+                      .semantics { contentDescription = "Copy link ${link.displayText}" }
+                      .testTag("copy_link_button_${link.launchUrl.hashCode()}"),
+                    contentAlignment = Alignment.Center
+                  ) {
+                    VeilIcons.CopyOutline(tint = colors.accent, size = 14.dp)
+                  }
                 }
               }
             }
           }
 
-          Spacer(modifier = Modifier.height(180.dp + navBottom))
+          Spacer(modifier = Modifier.height(28.dp))
         }
-      }
 
-      // Clean 4-Button Google Keep-style Bottom Bar + Popups + WYSIWYG Rich Text Bar
-      AnimatedVisibility(
-        visible = !isInlineDrawActive,
-        enter = fadeIn(tween(if (reduceMotion) 0 else 200, easing = VeilEasing)),
-        exit = fadeOut(tween(if (reduceMotion) 0 else 150)),
-        modifier = Modifier
-          .align(Alignment.BottomCenter)
-          .navigationBarsPadding()
-          .imePadding()
-          .padding(start = 16.dp, end = 16.dp, bottom = 16.dp)
-      ) {
+        // Card-free edge-to-edge docked bottom area INSIDE Column so scrollable note body
+        // ends cleanly above the toolbar & keyboard — zero text or cursor overlap ever!
         Column(
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.spacedBy(8.dp)
+          modifier = Modifier
+            .fillMaxWidth()
+            .background(screenBg)
+            .navigationBarsPadding()
+            .imePadding()
         ) {
-          // "+" Insert Tools Glassmorphism Panel
           AnimatedVisibility(
-            visible = activePanel == ActiveEditorPanel.INSERT && !isReadOnlyMode,
-            enter = fadeIn(tween(if (reduceMotion) 0 else 180)) + slideInVertically(
-              spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium)
-            ) { 28 },
-            exit = fadeOut(tween(if (reduceMotion) 0 else 140)) + slideOutVertically { 20 }
+            visible = !isInlineDrawActive,
+            enter = fadeIn(tween(if (reduceMotion) 0 else 180, easing = VeilEasing)),
+            exit = fadeOut(tween(if (reduceMotion) 0 else 140))
           ) {
-            InsertToolsPanel(
-              showCodeBlockOption = proFeatures.codeBlocksEnabled,
-              onTakePhoto = {
-                activePanel = ActiveEditorPanel.NONE
-                requestCameraCapture()
-              },
-              onAddImage = {
-                activePanel = ActiveEditorPanel.NONE
-                pickImagesLauncher.launch(
-                  PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            Column(modifier = Modifier.fillMaxWidth()) {
+              // "+" Insert Tools Seamless Docked Sheet
+              AnimatedVisibility(
+                visible = activePanel == ActiveEditorPanel.INSERT && !isReadOnlyMode,
+                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
+                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                ),
+                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+              ) {
+                InsertToolsPanel(
+                  sheetBg = sheetSurfaceColor,
+                  showCodeBlockOption = proFeatures.codeBlocksEnabled,
+                  onTakePhoto = {
+                    activePanel = ActiveEditorPanel.NONE
+                    requestCameraCapture()
+                  },
+                  onAddImage = {
+                    activePanel = ActiveEditorPanel.NONE
+                    pickImagesLauncher.launch(
+                      PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                  },
+                  onFullPageDrawing = {
+                    activePanel = ActiveEditorPanel.NONE
+                    isFullPageDraw = true
+                  },
+                  onInlineDrawBox = {
+                    activePanel = ActiveEditorPanel.NONE
+                    hasInlineDrawBox = true
+                    isInlineDrawActive = true
+                    showInlineBrushPopover = false
+                    isResizeMode = false
+                  },
+                  onChecklist = {
+                    activePanel = ActiveEditorPanel.NONE
+                    isChecklistMode = !isChecklistMode
+                    if (isChecklistMode && checklistItems.isEmpty()) {
+                      checklistItems = listOf(ChecklistItemData(1L, "", false))
+                    }
+                  },
+                  onVoiceNote = {
+                    activePanel = ActiveEditorPanel.NONE
+                    requestVoiceInput()
+                  },
+                  onInsertCodeBlock = {
+                    activePanel = ActiveEditorPanel.NONE
+                    val nextId = (codeBlocks.maxOfOrNull { it.id } ?: 0L) + 1L
+                    codeBlocks = codeBlocks + CodeBlockData(nextId, "")
+                  }
                 )
-              },
-              onFullPageDrawing = {
-                activePanel = ActiveEditorPanel.NONE
-                isFullPageDraw = true
-              },
-              onInlineDrawBox = {
-                activePanel = ActiveEditorPanel.NONE
-                hasInlineDrawBox = true
-                isInlineDrawActive = true
-                showInlineBrushPopover = false
-                isResizeMode = false
-              },
-              onChecklist = {
-                activePanel = ActiveEditorPanel.NONE
-                isChecklistMode = !isChecklistMode
-                if (isChecklistMode && checklistItems.isEmpty()) {
-                  checklistItems = listOf(ChecklistItemData(1L, "", false))
+              }
+
+              // Self-Destruct Quick-Select Docked Sheet (Off / 1h / 24h / 7d)
+              AnimatedVisibility(
+                visible = activePanel == ActiveEditorPanel.TIMER && proFeatures.selfDestructEnabled,
+                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
+                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                ),
+                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+              ) {
+                SelfDestructQuickPopup(
+                  currentExpiresAt = expiresAt,
+                  sheetBg = sheetSurfaceColor,
+                  tonalColor = tonalSurfaceColor,
+                  onSelectDurationMs = { durationMs ->
+                    expiresAt = if (durationMs <= 0L) 0L else System.currentTimeMillis() + durationMs
+                    nowTick = System.currentTimeMillis()
+                    activePanel = ActiveEditorPanel.NONE
+                  }
+                )
+              }
+
+              // Seamless Opaque Docked Bottom Sheet for Color & Background Pattern Picker (zero bleed-through)
+              AnimatedVisibility(
+                visible = activePanel == ActiveEditorPanel.PALETTE,
+                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
+                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                ),
+                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+              ) {
+                val sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                Box(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(sheetShape)
+                    .background(sheetSurfaceColor)
+                    .pointerInput(Unit) { detectTapGestures { } }
+                    .padding(top = 6.dp, bottom = 6.dp)
+                ) {
+                  NoteColorAndPatternPickerContent(
+                    selectedColor = color,
+                    selectedPattern = backgroundPattern,
+                    onSelectColor = { color = it },
+                    onSelectPattern = { backgroundPattern = it }
+                  )
                 }
-              },
-              onVoiceNote = {
-                activePanel = ActiveEditorPanel.NONE
-                requestVoiceInput()
-              },
-              onInsertCodeBlock = {
-                activePanel = ActiveEditorPanel.NONE
-                val nextId = (codeBlocks.maxOfOrNull { it.id } ?: 0L) + 1L
-                codeBlocks = codeBlocks + CodeBlockData(nextId, "")
               }
-            )
-          }
 
-          // Self-Destruct Quick-Select Popup (1-click Off / 1h / 24h / 7d)
-          AnimatedVisibility(
-            visible = activePanel == ActiveEditorPanel.TIMER && proFeatures.selfDestructEnabled,
-            enter = fadeIn(tween(if (reduceMotion) 0 else 180)) + slideInVertically(
-              spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium)
-            ) { 28 },
-            exit = fadeOut(tween(if (reduceMotion) 0 else 140)) + slideOutVertically { 20 }
-          ) {
-            SelfDestructQuickPopup(
-              currentExpiresAt = expiresAt,
-              onSelectDurationMs = { durationMs ->
-                expiresAt = if (durationMs <= 0L) 0L else System.currentTimeMillis() + durationMs
-                nowTick = System.currentTimeMillis()
-                activePanel = ActiveEditorPanel.NONE
+              // Three-Dot Overflow Seamless Docked Sheet
+              AnimatedVisibility(
+                visible = activePanel == ActiveEditorPanel.OVERFLOW,
+                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
+                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                ),
+                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+              ) {
+                NoteOverflowMenuPanel(
+                  sheetBg = sheetSurfaceColor,
+                  isReadOnlyMode = isReadOnlyMode,
+                  hasReminder = reminderTime > 0L,
+                  hasLabels = assignedLabels.isNotEmpty(),
+                  enableSharing = enableSharing,
+                  showVersionHistory = proFeatures.versionHistoryEnabled,
+                  versionCount = versionHistory.size,
+                  onToggleReadMode = {
+                    activePanel = ActiveEditorPanel.NONE
+                    val nextRead = !isReadOnlyMode
+                    isReadOnlyMode = nextRead
+                    if (nextRead) {
+                      focusManager.clearFocus()
+                      showFormatBar = false
+                      isInlineDrawActive = false
+                      isResizeMode = false
+                      showInlineBrushPopover = false
+                    }
+                  },
+                  onVersionHistory = {
+                    activePanel = ActiveEditorPanel.NONE
+                    showVersionHistoryDialog = true
+                  },
+                  onReminder = {
+                    activePanel = ActiveEditorPanel.NONE
+                    showReminderDialog = true
+                  },
+                  onLabels = {
+                    activePanel = ActiveEditorPanel.NONE
+                    showLabelDialog = true
+                  },
+                  onFindInNote = {
+                    activePanel = ActiveEditorPanel.NONE
+                    showFindBar = true
+                  },
+                  onMakeCopy = {
+                    activePanel = ActiveEditorPanel.NONE
+                    viewModel.duplicateDraftNote(
+                      title = title,
+                      content = contentField.text,
+                      color = color,
+                      isPinned = isPinned,
+                      isHidden = isHidden,
+                      labels = assignedLabels.joinToString(", "),
+                      checklistJson = buildExtrasJson(),
+                      reminderTime = reminderTime
+                    )
+                    scope.launch { snackbarHostState.showSnackbar("Copied note.") }
+                  },
+                  onCopyAllText = {
+                    activePanel = ActiveEditorPanel.NONE
+                    val fullText = NoteImageHelper.formatNotePlainText(title, contentField.text, checklistItems)
+                    NoteImageHelper.copyTextToClipboard(context, title.ifBlank { "Note" }, fullText)
+                    scope.launch { snackbarHostState.showSnackbar("All text copied to clipboard.") }
+                  },
+                  onSendShare = {
+                    activePanel = ActiveEditorPanel.NONE
+                    val fullText = NoteImageHelper.formatNotePlainText(title, contentField.text, checklistItems)
+                    NoteImageHelper.shareNote(context, title, fullText, imagePaths)
+                  },
+                  onArchive = {
+                    activePanel = ActiveEditorPanel.NONE
+                    note?.let { viewModel.archiveNote(it) } ?: persistNote()
+                    onBack()
+                  },
+                  onDelete = {
+                    activePanel = ActiveEditorPanel.NONE
+                    note?.let { viewModel.trashNote(it) }
+                    onBack()
+                  }
+                )
               }
-            )
-          }
 
-          // Two-Row Color & Background Pattern Picker Panel
-          AnimatedVisibility(
-            visible = activePanel == ActiveEditorPanel.PALETTE,
-            enter = fadeIn(tween(if (reduceMotion) 0 else 180)) + slideInVertically(
-              spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium)
-            ) { 28 },
-            exit = fadeOut(tween(if (reduceMotion) 0 else 140)) + slideOutVertically { 20 }
-          ) {
-            val panelShape = RoundedCornerShape(24.dp)
-            Box(
-              modifier = Modifier
-                .fillMaxWidth()
-                .shadow(14.dp, panelShape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
-                .clip(panelShape)
-                .background(colors.surface.copy(alpha = 0.96f))
-                .border(1.dp, colors.hiddenBorder.copy(alpha = 0.45f), panelShape)
-            ) {
-              NoteColorAndPatternPickerContent(
-                selectedColor = color,
-                selectedPattern = backgroundPattern,
-                onSelectColor = { color = it },
-                onSelectPattern = { backgroundPattern = it }
+              // "Aa" Seamless Docked WYSIWYG Rich Text Formatting Bar right above bottom bar / keyboard
+              AnimatedVisibility(
+                visible = showFormatBar && activePanel == ActiveEditorPanel.NONE && !isReadOnlyMode,
+                enter = fadeIn(tween(if (reduceMotion) 0 else 150)) + expandVertically(
+                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
+                ),
+                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+              ) {
+                RichTextFormattingBar(
+                  sheetBg = sheetSurfaceColor,
+                  tonalColor = tonalSurfaceColor,
+                  activeHeadingLevel = activeHeadingLevel,
+                  activeInlineStyles = activeInlineStyles,
+                  onHeading1 = { applyHeadingLevel(1) },
+                  onHeading2 = { applyHeadingLevel(2) },
+                  onNormalText = { applyHeadingLevel(0) },
+                  onBold = { toggleInlineRichStyle(RichStyle.BOLD) },
+                  onItalic = { toggleInlineRichStyle(RichStyle.ITALIC) },
+                  onUnderline = { toggleInlineRichStyle(RichStyle.UNDERLINE) },
+                  onStrikethrough = { toggleInlineRichStyle(RichStyle.STRIKE) },
+                  onHighlight = { toggleInlineRichStyle(RichStyle.HIGHLIGHT) }
+                )
+              }
+
+              // Card-Free Edge-to-Edge Material You Tonal Bottom Bar (+, [optional Timer], Palette, Aa | ⋮)
+              NoteEditorBottomBar(
+                barBgColor = screenBg,
+                tonalColor = tonalSurfaceColor,
+                isInsertOpen = activePanel == ActiveEditorPanel.INSERT,
+                isPaletteOpen = activePanel == ActiveEditorPanel.PALETTE,
+                isFormatBarOpen = showFormatBar,
+                isOverflowOpen = activePanel == ActiveEditorPanel.OVERFLOW,
+                isReadOnlyMode = isReadOnlyMode,
+                showTimerButton = proFeatures.selfDestructEnabled,
+                isTimerOpen = activePanel == ActiveEditorPanel.TIMER,
+                hasActiveTimer = expiresAt > nowTick,
+                onToggleInsert = {
+                  activePanel = if (activePanel == ActiveEditorPanel.INSERT) ActiveEditorPanel.NONE else ActiveEditorPanel.INSERT
+                },
+                onToggleTimer = {
+                  activePanel = if (activePanel == ActiveEditorPanel.TIMER) ActiveEditorPanel.NONE else ActiveEditorPanel.TIMER
+                },
+                onTogglePalette = {
+                  activePanel = if (activePanel == ActiveEditorPanel.PALETTE) ActiveEditorPanel.NONE else ActiveEditorPanel.PALETTE
+                },
+                onToggleFormatBar = {
+                  activePanel = ActiveEditorPanel.NONE
+                  showFormatBar = !showFormatBar
+                },
+                onToggleOverflow = {
+                  activePanel = if (activePanel == ActiveEditorPanel.OVERFLOW) ActiveEditorPanel.NONE else ActiveEditorPanel.OVERFLOW
+                }
               )
             }
           }
 
-          // Three-Dot Overflow Menu Panel (includes Read Mode + Version History when enabled)
+          // Ultra-Slim Drawing Toolbar for Inline Draw Box (docked cleanly at bottom)
           AnimatedVisibility(
-            visible = activePanel == ActiveEditorPanel.OVERFLOW,
-            enter = fadeIn(tween(if (reduceMotion) 0 else 180)) + slideInVertically(
-              spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium)
-            ) { 28 },
-            exit = fadeOut(tween(if (reduceMotion) 0 else 140)) + slideOutVertically { 20 }
+            visible = isInlineDrawActive && !isReadOnlyMode,
+            enter = slideInVertically(
+              animationSpec = tween(durationMillis = if (reduceMotion) 0 else 240, easing = VeilEasing),
+              initialOffsetY = { slideOffsetPx }
+            ) + fadeIn(tween(if (reduceMotion) 0 else 240, easing = VeilEasing)),
+            exit = slideOutVertically(
+              animationSpec = tween(if (reduceMotion) 0 else 180, easing = VeilEasing),
+              targetOffsetY = { slideOffsetPx }
+            ) + fadeOut(tween(if (reduceMotion) 0 else 180)),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
           ) {
-            NoteOverflowMenuPanel(
-              isReadOnlyMode = isReadOnlyMode,
-              hasReminder = reminderTime > 0L,
-              hasLabels = assignedLabels.isNotEmpty(),
-              enableSharing = enableSharing,
-              showVersionHistory = proFeatures.versionHistoryEnabled,
-              versionCount = versionHistory.size,
-              onToggleReadMode = {
-                activePanel = ActiveEditorPanel.NONE
-                val nextRead = !isReadOnlyMode
-                isReadOnlyMode = nextRead
-                if (nextRead) {
-                  focusManager.clearFocus()
-                  showFormatBar = false
-                  isInlineDrawActive = false
-                  isResizeMode = false
-                  showInlineBrushPopover = false
+            FloatingDrawingToolbar(
+              strokePalette = strokePalette,
+              selectedColorIndex = selectedColorIndex,
+              selectedTool = selectedTool,
+              strokeSizeDp = toolStrokeSizes[selectedTool] ?: selectedTool.defaultSize,
+              isPopoverExpanded = showInlineBrushPopover,
+              onTogglePopover = { showInlineBrushPopover = it },
+              onStrokeSizeChange = { newSize ->
+                toolStrokeSizes = toolStrokeSizes + (selectedTool to newSize)
+              },
+              canUndo = strokes.isNotEmpty(),
+              canRedo = undoneStrokes.isNotEmpty(),
+              onSelectColor = { idx ->
+                selectedColorIndex = idx
+                if (selectedTool == EditorDrawTool.ERASER) selectedTool = EditorDrawTool.PEN
+              },
+              onSelectTool = { selectedTool = it },
+              onUndo = {
+                if (strokes.isNotEmpty()) {
+                  undoneStrokes = undoneStrokes + strokes.last()
+                  strokes = strokes.dropLast(1)
                 }
               },
-              onVersionHistory = {
-                activePanel = ActiveEditorPanel.NONE
-                showVersionHistoryDialog = true
+              onRedo = {
+                if (undoneStrokes.isNotEmpty()) {
+                  strokes = strokes + undoneStrokes.last()
+                  undoneStrokes = undoneStrokes.dropLast(1)
+                }
               },
-              onReminder = {
-                activePanel = ActiveEditorPanel.NONE
-                showReminderDialog = true
-              },
-              onLabels = {
-                activePanel = ActiveEditorPanel.NONE
-                showLabelDialog = true
-              },
-              onFindInNote = {
-                activePanel = ActiveEditorPanel.NONE
-                showFindBar = true
-              },
-              onMakeCopy = {
-                activePanel = ActiveEditorPanel.NONE
-                viewModel.duplicateDraftNote(
-                  title = title,
-                  content = contentField.text,
-                  color = color,
-                  isPinned = isPinned,
-                  isHidden = isHidden,
-                  labels = assignedLabels.joinToString(", "),
-                  checklistJson = buildExtrasJson(),
-                  reminderTime = reminderTime
-                )
-                scope.launch { snackbarHostState.showSnackbar("Copied note.") }
-              },
-              onCopyAllText = {
-                activePanel = ActiveEditorPanel.NONE
-                val fullText = NoteImageHelper.formatNotePlainText(title, contentField.text, checklistItems)
-                NoteImageHelper.copyTextToClipboard(context, title.ifBlank { "Note" }, fullText)
-                scope.launch { snackbarHostState.showSnackbar("All text copied to clipboard.") }
-              },
-              onSendShare = {
-                activePanel = ActiveEditorPanel.NONE
-                val fullText = NoteImageHelper.formatNotePlainText(title, contentField.text, checklistItems)
-                NoteImageHelper.shareNote(context, title, fullText, imagePaths)
-              },
-              onArchive = {
-                activePanel = ActiveEditorPanel.NONE
-                note?.let { viewModel.archiveNote(it) } ?: persistNote()
-                onBack()
-              },
-              onDelete = {
-                activePanel = ActiveEditorPanel.NONE
-                note?.let { viewModel.trashNote(it) }
-                onBack()
+              onClose = {
+                isInlineDrawActive = false
+                showInlineBrushPopover = false
               }
             )
           }
-
-          // "Aa" True WYSIWYG Rich Text Formatting Bar right above the bottom bar / keyboard
-          AnimatedVisibility(
-            visible = showFormatBar && activePanel == ActiveEditorPanel.NONE && !isReadOnlyMode,
-            enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + slideInVertically(
-              spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessMedium)
-            ) { 18 },
-            exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + slideOutVertically { 14 }
-          ) {
-            RichTextFormattingBar(
-              activeHeadingLevel = activeHeadingLevel,
-              activeInlineStyles = activeInlineStyles,
-              onHeading1 = { applyHeadingLevel(1) },
-              onHeading2 = { applyHeadingLevel(2) },
-              onNormalText = { applyHeadingLevel(0) },
-              onBold = { toggleInlineRichStyle(RichStyle.BOLD) },
-              onItalic = { toggleInlineRichStyle(RichStyle.ITALIC) },
-              onUnderline = { toggleInlineRichStyle(RichStyle.UNDERLINE) },
-              onStrikethrough = { toggleInlineRichStyle(RichStyle.STRIKE) },
-              onHighlight = { toggleInlineRichStyle(RichStyle.HIGHLIGHT) }
-            )
-          }
-
-          // Sleek 4-Button Bottom Bar (+, [optional Timer], Palette, Aa | ⋮)
-          NoteEditorBottomBar(
-            isInsertOpen = activePanel == ActiveEditorPanel.INSERT,
-            isPaletteOpen = activePanel == ActiveEditorPanel.PALETTE,
-            isFormatBarOpen = showFormatBar,
-            isOverflowOpen = activePanel == ActiveEditorPanel.OVERFLOW,
-            isReadOnlyMode = isReadOnlyMode,
-            showTimerButton = proFeatures.selfDestructEnabled,
-            isTimerOpen = activePanel == ActiveEditorPanel.TIMER,
-            hasActiveTimer = expiresAt > nowTick,
-            onToggleInsert = {
-              activePanel = if (activePanel == ActiveEditorPanel.INSERT) ActiveEditorPanel.NONE else ActiveEditorPanel.INSERT
-            },
-            onToggleTimer = {
-              activePanel = if (activePanel == ActiveEditorPanel.TIMER) ActiveEditorPanel.NONE else ActiveEditorPanel.TIMER
-            },
-            onTogglePalette = {
-              activePanel = if (activePanel == ActiveEditorPanel.PALETTE) ActiveEditorPanel.NONE else ActiveEditorPanel.PALETTE
-            },
-            onToggleFormatBar = {
-              activePanel = ActiveEditorPanel.NONE
-              showFormatBar = !showFormatBar
-            },
-            onToggleOverflow = {
-              activePanel = if (activePanel == ActiveEditorPanel.OVERFLOW) ActiveEditorPanel.NONE else ActiveEditorPanel.OVERFLOW
-            }
-          )
         }
-      }
-
-      // Ultra-Slim Floating Drawing Toolbar for Inline Draw Box (tap active brush to reveal size/colors)
-      AnimatedVisibility(
-        visible = isInlineDrawActive && !isReadOnlyMode,
-        enter = slideInVertically(
-          animationSpec = tween(durationMillis = if (reduceMotion) 0 else 250, easing = VeilEasing),
-          initialOffsetY = { slideOffsetPx }
-        ) + fadeIn(tween(if (reduceMotion) 0 else 250, easing = VeilEasing)),
-        exit = slideOutVertically(
-          animationSpec = tween(if (reduceMotion) 0 else 200, easing = VeilEasing),
-          targetOffsetY = { slideOffsetPx }
-        ) + fadeOut(tween(if (reduceMotion) 0 else 200)),
-        modifier = Modifier
-          .align(Alignment.BottomCenter)
-          .navigationBarsPadding()
-          .padding(start = 16.dp, end = 16.dp, bottom = 20.dp)
-      ) {
-        FloatingDrawingToolbar(
-          strokePalette = strokePalette,
-          selectedColorIndex = selectedColorIndex,
-          selectedTool = selectedTool,
-          strokeSizeDp = toolStrokeSizes[selectedTool] ?: selectedTool.defaultSize,
-          isPopoverExpanded = showInlineBrushPopover,
-          onTogglePopover = { showInlineBrushPopover = it },
-          onStrokeSizeChange = { newSize ->
-            toolStrokeSizes = toolStrokeSizes + (selectedTool to newSize)
-          },
-          canUndo = strokes.isNotEmpty(),
-          canRedo = undoneStrokes.isNotEmpty(),
-          onSelectColor = { idx ->
-            selectedColorIndex = idx
-            if (selectedTool == EditorDrawTool.ERASER) selectedTool = EditorDrawTool.PEN
-          },
-          onSelectTool = { selectedTool = it },
-          onUndo = {
-            if (strokes.isNotEmpty()) {
-              undoneStrokes = undoneStrokes + strokes.last()
-              strokes = strokes.dropLast(1)
-            }
-          },
-          onRedo = {
-            if (undoneStrokes.isNotEmpty()) {
-              strokes = strokes + undoneStrokes.last()
-              undoneStrokes = undoneStrokes.dropLast(1)
-            }
-          },
-          onClose = {
-            isInlineDrawActive = false
-            showInlineBrushPopover = false
-          }
-        )
       }
 
       // Full-Screen Image Viewer with Offline OCR ("Grab Image Text"), Copy Image, Share, Delete

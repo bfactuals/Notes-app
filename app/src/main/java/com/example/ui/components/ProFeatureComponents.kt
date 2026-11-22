@@ -8,9 +8,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -24,37 +27,60 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.data.CodeBlockData
 import com.example.data.NoteImageHelper
 import com.example.data.NoteVersionSnapshot
+import com.example.ui.theme.DoodleCoral
+import com.example.ui.theme.DoodleMint
+import com.example.ui.theme.DoodleOrange
+import com.example.ui.theme.DoodlePink
+import com.example.ui.theme.DoodlePurple
+import com.example.ui.theme.DoodleSkyBlue
+import com.example.ui.theme.DoodleYellowHighlighter
 import com.example.ui.theme.VeilTextStyles
 import com.example.ui.theme.VeilThemeTokens
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.random.Random
 
 /**
- * Compact 1-click popup for Self-Destructing Notes directly above the bottom bar:
- * Off, 1 Hour, 24 Hours, 7 Days.
+ * Docked 1-click Self-Destruct timer sheet directly above the editor bottom bar:
+ * Off, 1 Hour, 24 Hours, 7 Days — opaque tonal surface matching the active note hue.
  */
 @Composable
 fun SelfDestructQuickPopup(
   currentExpiresAt: Long,
   onSelectDurationMs: (Long) -> Unit, // 0L = Off, > 0L = duration from now
-  modifier: Modifier = Modifier
+  modifier: Modifier = Modifier,
+  sheetBg: Color = VeilThemeTokens.colors.surface,
+  tonalColor: Color = VeilThemeTokens.colors.bg
 ) {
   val colors = VeilThemeTokens.colors
-  val shape = RoundedCornerShape(22.dp)
+  val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
   val now = System.currentTimeMillis()
   val remainingHours = if (currentExpiresAt > now) (currentExpiresAt - now) / 3_600_000.0 else 0.0
 
@@ -75,11 +101,10 @@ fun SelfDestructQuickPopup(
   Column(
     modifier = modifier
       .fillMaxWidth()
-      .shadow(14.dp, shape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
       .clip(shape)
-      .background(colors.surface.copy(alpha = 0.97f))
-      .border(1.dp, colors.hiddenBorder.copy(alpha = 0.45f), shape)
-      .padding(horizontal = 14.dp, vertical = 12.dp)
+      .background(sheetBg)
+      .pointerInput(Unit) { detectTapGestures { } }
+      .padding(horizontal = 16.dp, vertical = 14.dp)
       .testTag("self_destruct_popup"),
     verticalArrangement = Arrangement.spacedBy(10.dp)
   ) {
@@ -115,9 +140,9 @@ fun SelfDestructQuickPopup(
         Box(
           modifier = Modifier
             .weight(1f)
-            .height(36.dp)
+            .height(38.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(if (active) colors.accentSoft else colors.bg.copy(alpha = 0.72f))
+            .background(if (active) colors.accentSoft else tonalColor)
             .then(
               if (active) Modifier.border(1.dp, colors.accent.copy(alpha = 0.6f), RoundedCornerShape(14.dp))
               else Modifier
@@ -452,8 +477,20 @@ fun ClipboardQuickSavePill(
         .padding(horizontal = 16.dp)
         .shadow(12.dp, pillShape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
         .clip(pillShape)
-        .background(colors.surface.copy(alpha = 0.98f))
+        .background(colors.surface)
         .border(1.dp, colors.accent.copy(alpha = 0.4f), pillShape)
+        // Strictly intercept and consume all touches so tapping never clicks or selects note cards underneath
+        .clickable(
+          interactionSource = remember { MutableInteractionSource() },
+          indication = null,
+          onClick = {}
+        )
+        .pointerInput(Unit) {
+          detectTapGestures(
+            onTap = {},
+            onLongPress = {}
+          )
+        }
         .padding(start = 14.dp, end = 8.dp, top = 10.dp, bottom = 10.dp)
         .testTag("clipboard_quick_save_pill"),
       verticalAlignment = Alignment.CenterVertically,
@@ -566,6 +603,259 @@ fun SmartCategoryFilterRow(
             color = if (active) colors.accent else colors.muted
           )
         }
+      }
+    }
+  }
+}
+
+/**
+ * Sleek glassmorphism Welcome Gift modal shown ONCE 60 seconds after first install.
+ */
+@Composable
+fun ProGiftModalDialog(
+  onClaim: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  val colors = VeilThemeTokens.colors
+  val cardShape = RoundedCornerShape(28.dp)
+
+  Dialog(
+    onDismissRequest = onDismiss,
+    properties = DialogProperties(
+      dismissOnBackPress = true,
+      dismissOnClickOutside = true,
+      usePlatformDefaultWidth = false
+    )
+  ) {
+    Box(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 24.dp)
+        .widthIn(max = 400.dp)
+        .shadow(24.dp, cardShape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
+        .clip(cardShape)
+        .background(
+          Brush.verticalGradient(
+            colors = listOf(
+              colors.surface.copy(alpha = 0.96f),
+              colors.accentSoft.copy(alpha = if (colors.isDark) 0.85f else 0.72f)
+            )
+          )
+        )
+        .border(
+          width = 1.2.dp,
+          brush = Brush.linearGradient(
+            colors = listOf(
+              colors.accent.copy(alpha = 0.65f),
+              colors.hiddenBorder.copy(alpha = 0.45f),
+              colors.accent.copy(alpha = 0.4f)
+            )
+          ),
+          shape = cardShape
+        )
+        .padding(horizontal = 24.dp, vertical = 26.dp)
+        .testTag("pro_gift_modal_dialog")
+    ) {
+      Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+      ) {
+        Box(
+          modifier = Modifier
+            .size(56.dp)
+            .clip(CircleShape)
+            .background(colors.accent.copy(alpha = 0.16f))
+            .border(1.dp, colors.accent.copy(alpha = 0.4f), CircleShape),
+          contentAlignment = Alignment.Center
+        ) {
+          VeilIcons.SparklesOutline(tint = colors.accent, size = 28.dp)
+        }
+
+        Text(
+          text = "🎁 Welcome Gift — Pro Unlocked (100% OFF)",
+          style = VeilTextStyles.editorTitle.copy(fontSize = 20.sp, lineHeight = 26.sp),
+          color = colors.text,
+          textAlign = TextAlign.Center
+        )
+
+        Text(
+          text = "Just for you: All Pro Features (Self-Destruct Notes, Inline Calculator, Version History, Copyable Prompt Blocks & more) are unlocked free forever.",
+          style = VeilTextStyles.cardBody.copy(fontSize = 14.5.sp, lineHeight = 21.sp),
+          color = colors.muted,
+          textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(50.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(colors.accent)
+            .tactilePress(scaleDown = 0.95f, hapticOnClick = true, role = Role.Button, onClick = onClaim)
+            .testTag("claim_free_pro_button"),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = "Claim Free Pro ✨",
+            style = VeilTextStyles.cardTitle.copy(fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold),
+            color = Color.White
+          )
+        }
+
+        TextButton(
+          onClick = onDismiss,
+          modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .testTag("pro_gift_maybe_later_button")
+        ) {
+          Text(
+            text = "Maybe Later",
+            style = VeilTextStyles.cardBody.copy(fontWeight = FontWeight.Medium),
+            color = colors.muted
+          )
+        }
+      }
+    }
+  }
+}
+
+private data class ConfettiPiece(
+  val startXFrac: Float,
+  val startYFrac: Float,
+  val vx: Float,
+  val vy: Float,
+  val widthDp: Float,
+  val heightDp: Float,
+  val color: Color,
+  val rotationSpeed: Float,
+  val initialAngle: Float
+)
+
+/**
+ * Lightweight 2-second Compose Canvas confetti celebration overlay + floating
+ * "Pro Features Unlocked! 🎉" toast with subtle haptic feedback.
+ */
+@Composable
+fun ConfettiCelebrationOverlay(
+  triggerKey: Int,
+  modifier: Modifier = Modifier
+) {
+  val colors = VeilThemeTokens.colors
+  val reduceMotion = VeilThemeTokens.reduceMotion
+  val haptic = LocalHapticFeedback.current
+
+  var isPlaying by remember { mutableStateOf(false) }
+  var showUnlockedToast by remember { mutableStateOf(false) }
+  var elapsedSec by remember { mutableFloatStateOf(0f) }
+
+  val particles = remember(triggerKey) {
+    if (triggerKey <= 0) {
+      emptyList()
+    } else {
+      val palette = listOf(
+        colors.accent,
+        DoodlePink,
+        DoodleYellowHighlighter,
+        DoodleMint,
+        DoodleSkyBlue,
+        DoodleCoral,
+        DoodlePurple,
+        DoodleOrange
+      )
+      val rng = Random(triggerKey * 9973 + 17)
+      List(72) { idx ->
+        val angleRad = (-Math.PI / 2.0) + rng.nextDouble(-1.05, 1.05)
+        val speed = rng.nextDouble(420.0, 1250.0).toFloat()
+        ConfettiPiece(
+          startXFrac = 0.12f + rng.nextFloat() * 0.76f,
+          startYFrac = 0.16f + rng.nextFloat() * 0.22f,
+          vx = (cos(angleRad) * speed * 0.55f).toFloat(),
+          vy = (sin(angleRad) * speed * 0.75f).toFloat(),
+          widthDp = 6f + rng.nextFloat() * 5f,
+          heightDp = 9f + rng.nextFloat() * 7f,
+          color = palette[idx % palette.size],
+          rotationSpeed = rng.nextFloat() * 420f - 210f,
+          initialAngle = rng.nextFloat() * 360f
+        )
+      }
+    }
+  }
+
+  LaunchedEffect(triggerKey) {
+    if (triggerKey <= 0) return@LaunchedEffect
+    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+    showUnlockedToast = true
+    if (!reduceMotion) {
+      isPlaying = true
+      elapsedSec = 0f
+      val startNanos = withFrameNanos { it }
+      val durationSec = 2.0f
+      while (elapsedSec < durationSec) {
+        val nowNanos = withFrameNanos { it }
+        elapsedSec = ((nowNanos - startNanos) / 1_000_000_000f).coerceAtLeast(0f)
+      }
+      isPlaying = false
+    } else {
+      delay(2000L)
+    }
+    delay(600L)
+    showUnlockedToast = false
+  }
+
+  Box(modifier = modifier.fillMaxSize()) {
+    if (isPlaying && particles.isNotEmpty()) {
+      Canvas(modifier = Modifier.fillMaxSize()) {
+        val t = elapsedSec
+        val gravity = 1550f
+        val fadeAlpha = (1f - ((t - 1.35f) / 0.65f)).coerceIn(0f, 1f)
+        particles.forEach { p ->
+          val x = (p.startXFrac * size.width) + (p.vx * t)
+          val y = (p.startYFrac * size.height) + (p.vy * t) + (0.5f * gravity * t * t)
+          if (y < size.height + 60f) {
+            val w = p.widthDp.dp.toPx()
+            val h = p.heightDp.dp.toPx()
+            rotate(degrees = p.initialAngle + p.rotationSpeed * t, pivot = Offset(x, y)) {
+              drawRect(
+                color = p.color.copy(alpha = fadeAlpha),
+                topLeft = Offset(x - w / 2f, y - h / 2f),
+                size = Size(w, h)
+              )
+            }
+          }
+        }
+      }
+    }
+
+    AnimatedVisibility(
+      visible = showUnlockedToast,
+      enter = fadeIn(tween(180)) + slideInVertically { -40 },
+      exit = fadeOut(tween(220)) + slideOutVertically { -40 },
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .statusBarsPadding()
+        .padding(top = 14.dp, start = 20.dp, end = 20.dp)
+    ) {
+      val shape = RoundedCornerShape(24.dp)
+      Row(
+        modifier = Modifier
+          .shadow(12.dp, shape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
+          .clip(shape)
+          .background(colors.surface)
+          .border(1.dp, colors.accent.copy(alpha = 0.55f), shape)
+          .padding(horizontal = 18.dp, vertical = 11.dp)
+          .testTag("pro_unlocked_toast"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+      ) {
+        Text(
+          text = "Pro Features Unlocked! 🎉",
+          style = VeilTextStyles.cardTitle.copy(fontSize = 14.5.sp),
+          color = colors.text
+        )
       }
     }
   }

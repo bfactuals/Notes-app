@@ -3,16 +3,25 @@ package com.example.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
+import com.example.data.AppUpdateDownloader
 import com.example.data.NoteEntity
 import com.example.data.NoteExtrasCodec
 import com.example.data.NoteExtrasData
+import com.example.data.NoteReminderScheduler
 import com.example.data.NoteRepository
 import com.example.data.NoteVersionSnapshot
 import com.example.data.ProFeaturesConfig
+import com.example.data.RemoteConfig
+import com.example.data.RemoteConfigRepository
+import com.example.data.RemoteConfigValidator
+import com.example.data.RemoteVersionInfo
 import com.example.data.RichSpanData
+import com.example.data.UpdateDownloadState
 import com.example.data.VeilBackupCrypto
 import com.example.data.VeilDatabase
 import com.example.data.VeilPreferences
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +43,8 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
 
   private val repository: NoteRepository
   private val preferences: VeilPreferences
+  private val remoteConfigRepository: RemoteConfigRepository
+  private var updateDownloadJob: Job? = null
 
   // Tracks last offered clipboard string in session so dismissed/saved snippets aren't re-prompted
   private var lastHandledClipboardText: String? = null
@@ -42,6 +53,13 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
     val db = VeilDatabase.getDatabase(application)
     repository = NoteRepository(db.noteDao())
     preferences = VeilPreferences(application)
+    remoteConfigRepository = RemoteConfigRepository(preferences)
+    NoteReminderScheduler.ensureNotificationChannel(application)
+    viewModelScope.launch {
+      preferences.ensureFirstInstallTimeRecorded()
+      _remoteConfig.value = remoteConfigRepository.loadCachedConfig()
+      refreshRemoteData(force = false)
+    }
     seedWelcomeNoteIfFirstLaunch()
     runStartupMaintenance()
     startPeriodicSelfDestructWatcher()
@@ -92,11 +110,57 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
   val proFeatures: StateFlow<ProFeaturesConfig> = preferences.proFeatures
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ProFeaturesConfig())
 
+  val firstInstallTimeMs: StateFlow<Long> = preferences.firstInstallTimeMs
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0L)
+
+  val proGiftResolved: StateFlow<Boolean> = preferences.proGiftResolved
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
+  val proGiftClaimed: StateFlow<Boolean> = preferences.proGiftClaimed
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+  private val _proCelebrationEvent = MutableStateFlow(0)
+  val proCelebrationEvent: StateFlow<Int> = _proCelebrationEvent
+
   val fontSize: StateFlow<String> = preferences.fontSize
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "medium")
 
   val fontStyle: StateFlow<String> = preferences.fontStyle
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "sans")
+
+  // Remote Config, Announcements, Star Nudge & Update System State
+  private val _remoteConfig = MutableStateFlow(RemoteConfig())
+  val remoteConfig: StateFlow<RemoteConfig> = _remoteConfig
+
+  private val _isRefreshingConfig = MutableStateFlow(false)
+  val isRefreshingConfig: StateFlow<Boolean> = _isRefreshingConfig
+
+  private val _remoteVersionInfo = MutableStateFlow<RemoteVersionInfo?>(null)
+  val remoteVersionInfo: StateFlow<RemoteVersionInfo?> = _remoteVersionInfo
+
+  private val _availableUpdate = MutableStateFlow<RemoteVersionInfo?>(null)
+  val availableUpdate: StateFlow<RemoteVersionInfo?> = _availableUpdate
+
+  private val _isMandatoryUpdate = MutableStateFlow(false)
+  val isMandatoryUpdate: StateFlow<Boolean> = _isMandatoryUpdate
+
+  private val _isOptionalUpdateDismissed = MutableStateFlow(false)
+  val isOptionalUpdateDismissed: StateFlow<Boolean> = _isOptionalUpdateDismissed
+
+  private val _updateDownloadState = MutableStateFlow<UpdateDownloadState>(UpdateDownloadState.Idle)
+  val updateDownloadState: StateFlow<UpdateDownloadState> = _updateDownloadState
+
+  private val _qrReachableMap = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+  val qrReachableMap: StateFlow<Map<String, Boolean>> = _qrReachableMap
+
+  val dismissedAnnouncementHash: StateFlow<String> = preferences.dismissedAnnouncementHash
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+  val totalNotesCreated: StateFlow<Int> = preferences.totalNotesCreated
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+  val starNudgeDismissed: StateFlow<Boolean> = preferences.starNudgeDismissed
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
   val allLabels: StateFlow<List<String>> = combine(
     repository.activeNotes,
@@ -154,6 +218,129 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         purgeExpiredTrashNotesNow()
       }
     }
+    refreshRemoteData(force = false)
+  }
+
+  fun refreshRemoteData(force: Boolean = false, onFinished: ((Boolean) -> Unit)? = null) {
+    viewModelScope.launch {
+      if (force) {
+        _isRefreshingConfig.value = true
+      }
+      var fetchedFresh = false
+      try {
+        val (cfg, cfgUpdated) = remoteConfigRepository.fetchConfig(force)
+        _remoteConfig.value = cfg
+        fetchedFresh = cfgUpdated
+
+        val qrUrl = cfg.support.qrImageUrl
+        if (cfg.support.enabled && cfg.support.upiEnabled && qrUrl.isNotEmpty()) {
+          if (force || !_qrReachableMap.value.containsKey(qrUrl)) {
+            val reachable = remoteConfigRepository.isImageUrlReachable(qrUrl)
+            _qrReachableMap.update { it + (qrUrl to reachable) }
+          }
+        }
+
+        val verInfo = remoteConfigRepository.fetchVersionInfo(force)
+        _remoteVersionInfo.value = verInfo
+        evaluateVersionUpdate(verInfo, reopenIfOptional = force)
+      } finally {
+        if (force) {
+          _isRefreshingConfig.value = false
+        }
+        onFinished?.invoke(fetchedFresh)
+      }
+    }
+  }
+
+  private fun evaluateVersionUpdate(info: RemoteVersionInfo?, reopenIfOptional: Boolean) {
+    if (info == null || !RemoteConfigValidator.isValidHttpsUrl(info.updateUrl)) {
+      _availableUpdate.value = null
+      _isMandatoryUpdate.value = false
+      return
+    }
+    val installedCode = BuildConfig.VERSION_CODE
+    val installedName = BuildConfig.VERSION_NAME
+    val newerByCode = info.versionCode > installedCode
+    val newerByName = info.latestVersion.isNotBlank() &&
+      RemoteConfigValidator.compareVersions(info.latestVersion, installedName) > 0
+    val hasUpdate = newerByCode || newerByName
+
+    if (!hasUpdate) {
+      _availableUpdate.value = null
+      _isMandatoryUpdate.value = false
+      return
+    }
+
+    val belowMin = info.minVersion.isNotBlank() &&
+      RemoteConfigValidator.compareVersions(installedName, info.minVersion) < 0
+    val mandatory = info.forceUpdate || belowMin
+
+    _availableUpdate.value = info
+    _isMandatoryUpdate.value = mandatory
+    if (mandatory || reopenIfOptional) {
+      _isOptionalUpdateDismissed.value = false
+    }
+  }
+
+  fun checkQrReachability(url: String) {
+    if (url.isBlank() || _qrReachableMap.value.containsKey(url)) return
+    viewModelScope.launch {
+      val reachable = remoteConfigRepository.isImageUrlReachable(url)
+      _qrReachableMap.update { it + (url to reachable) }
+    }
+  }
+
+  fun dismissAnnouncement(hash: String) {
+    if (hash.isBlank()) return
+    viewModelScope.launch { preferences.dismissAnnouncement(hash) }
+  }
+
+  fun dismissStarNudge() {
+    viewModelScope.launch { preferences.dismissStarNudge() }
+  }
+
+  fun dismissOptionalUpdate() {
+    if (!_isMandatoryUpdate.value) {
+      _isOptionalUpdateDismissed.value = true
+    }
+  }
+
+  fun reopenUpdateDialog() {
+    if (_availableUpdate.value != null) {
+      _isOptionalUpdateDismissed.value = false
+    }
+  }
+
+  fun startApkUpdateDownload() {
+    val update = _availableUpdate.value ?: return
+    if (_updateDownloadState.value is UpdateDownloadState.Downloading ||
+      _updateDownloadState.value is UpdateDownloadState.Verifying
+    ) {
+      return
+    }
+    updateDownloadJob?.cancel()
+    updateDownloadJob = viewModelScope.launch {
+      AppUpdateDownloader.downloadAndVerifyApk(
+        context = getApplication(),
+        updateUrl = update.updateUrl,
+        expectedSha256 = update.sha256,
+        onStateChange = { state ->
+          _updateDownloadState.value = state
+        }
+      )
+    }
+  }
+
+  fun installDownloadedApk(): String? {
+    val ready = _updateDownloadState.value as? UpdateDownloadState.ReadyToInstall
+      ?: return "Update package is not ready yet."
+    return AppUpdateDownloader.launchPackageInstaller(getApplication(), ready.apkFile)
+  }
+
+  fun resetUpdateDownloadState() {
+    updateDownloadJob?.cancel()
+    updateDownloadJob = null
+    _updateDownloadState.value = UpdateDownloadState.Idle
   }
 
   private suspend fun purgeExpiredSelfDestructNotesNow() {
@@ -163,6 +350,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
       val extras = NoteExtrasCodec.decode(note.checklistJson)
       if (extras.expiresAt > 0L && extras.expiresAt <= now) {
         // Permanently delete bypassing Trash
+        NoteReminderScheduler.cancelReminder(getApplication(), note.id)
         repository.deleteNoteById(note.id)
       }
     }
@@ -177,6 +365,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         val extras = NoteExtrasCodec.decode(note.checklistJson)
         val trashedSince = if (extras.deletedAt > 0L) extras.deletedAt else note.updatedAt
         if (trashedSince in 1L..cutoff) {
+          NoteReminderScheduler.cancelReminder(getApplication(), note.id)
           repository.deleteNoteById(note.id)
         }
       }
@@ -214,6 +403,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         updatedAt = now
       )
       val newId = repository.insertNote(newNote)
+      preferences.incrementTotalNotesCreated()
       val existingOrder = preferences.customNoteOrder.first()
       if (existingOrder.isNotEmpty()) {
         preferences.setCustomNoteOrder(listOf(newId) + existingOrder)
@@ -395,11 +585,29 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { preferences.setHapticFeedbackEnabled(enabled) }
   }
 
-  // Pro Features setters
+  // Pro Features setters & Free Gift experience
+  fun claimFreeProGift() {
+    viewModelScope.launch {
+      preferences.claimProGift()
+      _proCelebrationEvent.update { it + 1 }
+      withContext(Dispatchers.IO) { purgeExpiredTrashNotesNow() }
+    }
+  }
+
+  fun dismissProGift() {
+    viewModelScope.launch {
+      preferences.dismissProGift()
+    }
+  }
+
   fun setAllProFeatures(enabled: Boolean) {
     viewModelScope.launch {
+      val wasClaimedBefore = preferences.proGiftClaimed.first()
       preferences.setAllProFeatures(enabled)
       if (enabled) {
+        if (!wasClaimedBefore) {
+          _proCelebrationEvent.update { it + 1 }
+        }
         withContext(Dispatchers.IO) { purgeExpiredTrashNotesNow() }
       }
     }
@@ -477,6 +685,8 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
           updatedAt = now
         )
         val newId = repository.insertNote(note)
+        preferences.incrementTotalNotesCreated()
+        syncNativeReminder(newId, title, content, checklistJson, reminderTime)
         val existingOrder = preferences.customNoteOrder.first()
         if (existingOrder.isNotEmpty()) {
           preferences.setCustomNoteOrder(listOf(newId) + existingOrder)
@@ -512,6 +722,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
             incomingExtras.copy(versionHistory = oldExtras.versionHistory)
           }
 
+          val encodedExtras = NoteExtrasCodec.encode(finalExtras)
           val updated = existing.copy(
             title = title,
             content = content,
@@ -519,13 +730,42 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
             isPinned = isPinned,
             isHidden = isHidden,
             labels = parsedLabels.joinToString(", "),
-            checklistJson = NoteExtrasCodec.encode(finalExtras),
+            checklistJson = encodedExtras,
             reminderTime = reminderTime,
             updatedAt = now
           )
           repository.updateNote(updated)
+          syncNativeReminder(updated.id, updated.title, updated.content, encodedExtras, updated.reminderTime)
         }
       }
+    }
+  }
+
+  private fun syncNativeReminder(
+    noteId: Long,
+    title: String,
+    content: String,
+    checklistJson: String,
+    reminderTime: Long
+  ) {
+    if (noteId <= 0L) return
+    val app = getApplication<Application>()
+    if (reminderTime > System.currentTimeMillis()) {
+      val extras = NoteExtrasCodec.decode(checklistJson)
+      val preview = when {
+        content.isNotBlank() -> content.trim()
+        extras.checklist.isNotEmpty() -> extras.checklist.take(3).joinToString(" · ") { it.text }
+        else -> "Tap to open your note"
+      }
+      NoteReminderScheduler.scheduleReminder(
+        context = app,
+        noteId = noteId,
+        title = title.ifBlank { "Note Reminder" },
+        preview = preview,
+        triggerAtMillis = reminderTime
+      )
+    } else {
+      NoteReminderScheduler.cancelReminder(app, noteId)
     }
   }
 
@@ -575,6 +815,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
       val now = System.currentTimeMillis()
       val extras = NoteExtrasCodec.decode(note.checklistJson)
       val stampedJson = NoteExtrasCodec.encode(extras.copy(deletedAt = now))
+      NoteReminderScheduler.cancelReminder(getApplication(), note.id)
       repository.updateNote(
         note.copy(
           isTrashed = true,
@@ -599,17 +840,22 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
           updatedAt = now
         )
       )
+      syncNativeReminder(note.id, note.title, note.content, clearedJson, note.reminderTime)
     }
   }
 
   fun deletePermanently(note: NoteEntity) {
     viewModelScope.launch {
+      NoteReminderScheduler.cancelReminder(getApplication(), note.id)
       repository.deleteNoteById(note.id)
     }
   }
 
   fun emptyTrash() {
     viewModelScope.launch {
+      trashedNotes.value.forEach { n ->
+        NoteReminderScheduler.cancelReminder(getApplication(), n.id)
+      }
       repository.emptyTrash()
     }
   }
@@ -624,6 +870,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         updatedAt = now
       )
       val newId = repository.insertNote(copy)
+      preferences.incrementTotalNotesCreated()
       val existingOrder = preferences.customNoteOrder.first()
       if (existingOrder.isNotEmpty()) {
         preferences.setCustomNoteOrder(listOf(newId) + existingOrder)
@@ -657,6 +904,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         updatedAt = now
       )
       val newId = repository.insertNote(copy)
+      preferences.incrementTotalNotesCreated()
       val existingOrder = preferences.customNoteOrder.first()
       if (existingOrder.isNotEmpty()) {
         preferences.setCustomNoteOrder(listOf(newId) + existingOrder)
@@ -691,6 +939,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
       val now = System.currentTimeMillis()
       notes.forEach { note ->
         repository.updateNote(note.copy(reminderTime = reminderTime, updatedAt = now))
+        syncNativeReminder(note.id, note.title, note.content, note.checklistJson, reminderTime)
       }
     }
   }

@@ -12,6 +12,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -336,6 +338,11 @@ fun ArchiveUndoToast(
         .clip(shape)
         .background(colors.surface)
         .border(1.dp, colors.hiddenBorder.copy(alpha = 0.5f), shape)
+        .clickable(
+          interactionSource = remember { MutableInteractionSource() },
+          indication = null,
+          onClick = {}
+        )
         .testTag("archive_undo_toast")
     ) {
       Row(

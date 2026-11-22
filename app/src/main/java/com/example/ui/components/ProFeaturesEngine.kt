@@ -20,7 +20,10 @@ enum class NoteSmartCategory(val label: String) {
 }
 
 private val CURRENCY_REGEX = Regex("[₹\$€£]")
-private val CALC_TOTAL_REGEX = Regex("\\d[\\d.,]*\\s*=\\s*-?\\d[\\d.,]*")
+// Strict inline-math result pattern: requires an arithmetic operator (+, -, *, /) or '%' before '= <number>'
+private val CALC_TOTAL_REGEX = Regex(
+  "(?:\\d[\\d.,]*\\s*[+\\-*/]\\s*\\d|\\d[\\d.,]*\\s*%)[^\\n=]{0,40}=\\s*-?\\d[\\d.,]*"
+)
 
 fun matchesSmartCategory(
   note: NoteEntity,

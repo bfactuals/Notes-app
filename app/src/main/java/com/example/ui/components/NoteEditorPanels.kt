@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
@@ -17,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -30,12 +32,16 @@ import com.example.ui.theme.VeilTextStyles
 import com.example.ui.theme.VeilThemeTokens
 
 /**
- * Clean 4-button Google Keep-style Note Editor Bottom Bar:
- * Left: "+", [optional subtle Self-Destruct Timer icon when Pro enabled], Color Palette, "Aa"
+ * Card-free edge-to-edge Material You docked Note Editor Bottom Bar:
+ * Each action icon sits inside its own individual soft circular tonal button (44.dp)
+ * paired dynamically to the active note's color in Light and Dark modes.
+ * Left: "+", [optional Timer], Color Palette, "Aa"
  * Right: "⋮" (Three-Dot Menu)
  */
 @Composable
 fun NoteEditorBottomBar(
+  barBgColor: Color,
+  tonalColor: Color,
   isInsertOpen: Boolean,
   isPaletteOpen: Boolean,
   isFormatBarOpen: Boolean,
@@ -51,73 +57,67 @@ fun NoteEditorBottomBar(
   onToggleOverflow: () -> Unit,
   modifier: Modifier = Modifier
 ) {
-  val colors = VeilThemeTokens.colors
-  val barShape = RoundedCornerShape(24.dp)
-
   Row(
     modifier = modifier
       .fillMaxWidth()
-      .shadow(
-        elevation = 10.dp,
-        shape = barShape,
-        ambientColor = colors.toolbarShadow,
-        spotColor = colors.toolbarShadow
-      )
-      .clip(barShape)
-      .background(colors.surface.copy(alpha = 0.96f))
-      .border(1.dp, colors.hiddenBorder.copy(alpha = 0.35f), barShape)
-      .padding(horizontal = 10.dp, vertical = 6.dp),
+      .background(barBgColor)
+      .pointerInput(Unit) { detectTapGestures { } }
+      .padding(horizontal = 16.dp, vertical = 10.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
-    // Left side: 1) "+", [optional Timer right next to "+"], 2) Color Palette, 3) "Aa"
+    // Left side: 1) "+", [optional Timer], 2) Color Palette, 3) "Aa"
     Row(
-      horizontalArrangement = Arrangement.spacedBy(4.dp),
+      horizontalArrangement = Arrangement.spacedBy(10.dp),
       verticalAlignment = Alignment.CenterVertically
     ) {
-      EditorBottomActionButton(
+      EditorBottomTonalButton(
         active = isInsertOpen,
         enabled = !isReadOnlyMode,
+        tonalColor = tonalColor,
         description = "Insert attachment or tool",
         tag = "editor_insert_plus_button",
         onClick = onToggleInsert
       ) { tint ->
         Box(
           modifier = Modifier
-            .size(26.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .border(1.8.dp, tint, RoundedCornerShape(8.dp)),
+            .size(22.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .border(1.7.dp, tint, RoundedCornerShape(6.dp)),
           contentAlignment = Alignment.Center
         ) {
-          VeilIcons.Plus(tint = tint, size = 16.dp)
+          VeilIcons.Plus(tint = tint, size = 14.dp)
         }
       }
 
       if (showTimerButton) {
-        EditorBottomActionButton(
+        EditorBottomTonalButton(
           active = isTimerOpen || hasActiveTimer,
           enabled = true,
+          tonalColor = tonalColor,
           description = "Self-destruct timer",
           tag = "editor_self_destruct_button",
           onClick = onToggleTimer
         ) { tint ->
-          VeilIcons.HourglassOutline(tint = tint, size = 21.dp)
+          VeilIcons.HourglassOutline(tint = tint, size = 20.dp)
         }
       }
 
-      EditorBottomActionButton(
+      EditorBottomTonalButton(
         active = isPaletteOpen,
         enabled = true,
+        tonalColor = tonalColor,
         description = "Note colors and backgrounds",
         tag = "editor_color_button",
         onClick = onTogglePalette
       ) { tint ->
-        VeilIcons.PaletteOutline(tint = tint, size = 22.dp)
+        VeilIcons.PaletteOutline(tint = tint, size = 20.dp)
       }
 
-      EditorBottomActionButton(
+      EditorBottomTonalButton(
         active = isFormatBarOpen,
         enabled = !isReadOnlyMode,
+        tonalColor = tonalColor,
         description = "Rich text formatting",
         tag = "editor_format_aa_button",
         onClick = onToggleFormatBar
@@ -125,7 +125,7 @@ fun NoteEditorBottomBar(
         Text(
           text = "Aa",
           style = VeilTextStyles.cardTitle.copy(
-            fontSize = 16.sp,
+            fontSize = 15.5.sp,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = (-0.2).sp
           ),
@@ -135,38 +135,45 @@ fun NoteEditorBottomBar(
     }
 
     // Right side: 4) "⋮" Three-Dot Menu
-    EditorBottomActionButton(
+    EditorBottomTonalButton(
       active = isOverflowOpen,
       enabled = true,
+      tonalColor = tonalColor,
       description = "More note options",
       tag = "editor_overflow_menu_button",
       onClick = onToggleOverflow
     ) { tint ->
-      VeilIcons.MoreVert(tint = tint, size = 22.dp)
+      VeilIcons.MoreVert(tint = tint, size = 20.dp)
     }
   }
 }
 
 @Composable
-private fun EditorBottomActionButton(
+private fun EditorBottomTonalButton(
   active: Boolean,
   enabled: Boolean = true,
+  tonalColor: Color,
   description: String,
   tag: String,
   onClick: () -> Unit,
   content: @Composable (Color) -> Unit
 ) {
   val colors = VeilThemeTokens.colors
-  val tint = when {
-    !enabled -> colors.muted.copy(alpha = 0.35f)
+  val containerBg = when {
+    !enabled -> tonalColor.copy(alpha = 0.45f)
     active -> colors.accent
+    else -> tonalColor
+  }
+  val tint = when {
+    !enabled -> colors.muted.copy(alpha = 0.4f)
+    active -> Color.White
     else -> colors.text
   }
   Box(
     modifier = Modifier
-      .size(48.dp)
+      .size(44.dp)
       .clip(CircleShape)
-      .background(if (active && enabled) colors.accentSoft else Color.Transparent)
+      .background(containerBg)
       .tactilePress(scaleDown = 0.88f, enabled = enabled, hapticOnClick = true, onClick = onClick)
       .semantics { contentDescription = description }
       .testTag(tag),
@@ -177,12 +184,13 @@ private fun EditorBottomActionButton(
 }
 
 /**
- * True WYSIWYG Rich Text Formatting Bar toggled by "Aa" right above the keyboard.
- * Active buttons glow with accent tint so users always see current heading & inline styles.
- * Includes: H1, H2, Normal text, Bold, Italic, Underline, Strikethrough, Highlight.
+ * Seamless docked WYSIWYG Rich Text Formatting Bar toggled by "Aa" right above the bottom bar / keyboard.
+ * Active buttons highlight with accent fill so users always see current heading & inline styles.
  */
 @Composable
 fun RichTextFormattingBar(
+  sheetBg: Color,
+  tonalColor: Color,
   activeHeadingLevel: Int,
   activeInlineStyles: Set<String>,
   onHeading1: () -> Unit,
@@ -196,23 +204,23 @@ fun RichTextFormattingBar(
   modifier: Modifier = Modifier
 ) {
   val colors = VeilThemeTokens.colors
-  val shape = RoundedCornerShape(22.dp)
+  val shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 
   LazyRow(
     modifier = modifier
       .fillMaxWidth()
-      .shadow(8.dp, shape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
       .clip(shape)
-      .background(colors.surface.copy(alpha = 0.96f))
-      .border(1.dp, colors.hiddenBorder.copy(alpha = 0.35f), shape)
-      .padding(horizontal = 10.dp, vertical = 6.dp),
-    horizontalArrangement = Arrangement.spacedBy(6.dp),
+      .background(sheetBg)
+      .pointerInput(Unit) { detectTapGestures { } }
+      .padding(horizontal = 14.dp, vertical = 10.dp),
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
     verticalAlignment = Alignment.CenterVertically
   ) {
     item {
       FormatChip(
         label = "H1",
         active = activeHeadingLevel == 1,
+        tonalColor = tonalColor,
         weight = FontWeight.Bold,
         onClick = onHeading1,
         tag = "fmt_h1"
@@ -222,6 +230,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "H2",
         active = activeHeadingLevel == 2,
+        tonalColor = tonalColor,
         weight = FontWeight.SemiBold,
         onClick = onHeading2,
         tag = "fmt_h2"
@@ -231,6 +240,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "Normal",
         active = activeHeadingLevel == 0,
+        tonalColor = tonalColor,
         weight = FontWeight.Medium,
         onClick = onNormalText,
         tag = "fmt_normal"
@@ -241,13 +251,14 @@ fun RichTextFormattingBar(
         modifier = Modifier
           .width(1.dp)
           .height(22.dp)
-          .background(colors.accentSoft)
+          .background(colors.muted.copy(alpha = 0.25f))
       )
     }
     item {
       FormatChip(
         label = "B",
         active = RichStyle.BOLD in activeInlineStyles,
+        tonalColor = tonalColor,
         weight = FontWeight.Bold,
         onClick = onBold,
         tag = "fmt_bold"
@@ -257,6 +268,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "I",
         active = RichStyle.ITALIC in activeInlineStyles,
+        tonalColor = tonalColor,
         style = FontStyle.Italic,
         weight = FontWeight.SemiBold,
         onClick = onItalic,
@@ -267,6 +279,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "U",
         active = RichStyle.UNDERLINE in activeInlineStyles,
+        tonalColor = tonalColor,
         decoration = TextDecoration.Underline,
         weight = FontWeight.SemiBold,
         onClick = onUnderline,
@@ -277,6 +290,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "S",
         active = RichStyle.STRIKE in activeInlineStyles,
+        tonalColor = tonalColor,
         decoration = TextDecoration.LineThrough,
         weight = FontWeight.SemiBold,
         onClick = onStrikethrough,
@@ -287,6 +301,7 @@ fun RichTextFormattingBar(
       FormatChip(
         label = "HL",
         active = RichStyle.HIGHLIGHT in activeInlineStyles,
+        tonalColor = tonalColor,
         weight = FontWeight.SemiBold,
         highlightBadge = true,
         onClick = onHighlight,
@@ -300,6 +315,7 @@ fun RichTextFormattingBar(
 private fun FormatChip(
   label: String,
   active: Boolean,
+  tonalColor: Color,
   weight: FontWeight = FontWeight.Medium,
   style: FontStyle = FontStyle.Normal,
   decoration: TextDecoration = TextDecoration.None,
@@ -309,13 +325,13 @@ private fun FormatChip(
 ) {
   val colors = VeilThemeTokens.colors
   val bg = when {
-    active && highlightBadge -> colors.highlight.copy(alpha = 0.7f)
-    active -> colors.accentSoft
-    else -> colors.bg.copy(alpha = 0.72f)
+    active && highlightBadge -> colors.highlight.copy(alpha = 0.85f)
+    active -> colors.accent
+    else -> tonalColor
   }
   val fg = when {
     active && highlightBadge -> colors.text
-    active -> colors.accent
+    active -> Color.White
     else -> colors.text
   }
 
@@ -323,11 +339,10 @@ private fun FormatChip(
     modifier = Modifier
       .height(36.dp)
       .defaultMinSize(minWidth = 38.dp)
-      .clip(RoundedCornerShape(14.dp))
+      .clip(RoundedCornerShape(12.dp))
       .background(bg)
-      .then(if (active) Modifier.border(1.dp, colors.accent.copy(alpha = 0.55f), RoundedCornerShape(14.dp)) else Modifier)
       .tactilePress(scaleDown = 0.90f, hapticOnClick = true, onClick = onClick)
-      .padding(horizontal = 11.dp)
+      .padding(horizontal = 12.dp)
       .testTag(tag),
     contentAlignment = Alignment.Center
   ) {
@@ -345,11 +360,11 @@ private fun FormatChip(
 }
 
 /**
- * Compact glassmorphism popup for the "+" Insert button.
- * Includes optional "Prompt / Code Block" when enabled in Pro Features.
+ * Seamless docked sheet for the "+" Insert button matching the note's opaque tonal surface.
  */
 @Composable
 fun InsertToolsPanel(
+  sheetBg: Color,
   showCodeBlockOption: Boolean = false,
   onTakePhoto: () -> Unit,
   onAddImage: () -> Unit,
@@ -361,16 +376,15 @@ fun InsertToolsPanel(
   modifier: Modifier = Modifier
 ) {
   val colors = VeilThemeTokens.colors
-  val shape = RoundedCornerShape(24.dp)
+  val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
 
   Column(
     modifier = modifier
       .fillMaxWidth()
-      .shadow(14.dp, shape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
       .clip(shape)
-      .background(colors.surface.copy(alpha = 0.95f))
-      .border(1.dp, colors.hiddenBorder.copy(alpha = 0.45f), shape)
-      .padding(vertical = 8.dp, horizontal = 8.dp)
+      .background(sheetBg)
+      .pointerInput(Unit) { detectTapGestures { } }
+      .padding(top = 10.dp, bottom = 6.dp, start = 10.dp, end = 10.dp)
       .testTag("insert_tools_panel")
   ) {
     PanelActionRow(
@@ -421,12 +435,12 @@ fun InsertToolsPanel(
 }
 
 /**
- * Compact popup for the "⋮" Three-Dot Menu in Note Editor.
- * Contains: Read Mode, [optional Version History], Reminder, Labels, Find in Note,
- * Make a Copy, Copy All Text, Send/Share, Archive, Delete. Zero Hide/Lock icons anywhere.
+ * Seamless docked sheet for the "⋮" Three-Dot Menu in Note Editor matching the note's opaque tonal surface.
+ * Zero Hide/Lock icons anywhere.
  */
 @Composable
 fun NoteOverflowMenuPanel(
+  sheetBg: Color,
   isReadOnlyMode: Boolean,
   hasReminder: Boolean,
   hasLabels: Boolean,
@@ -446,16 +460,15 @@ fun NoteOverflowMenuPanel(
   modifier: Modifier = Modifier
 ) {
   val colors = VeilThemeTokens.colors
-  val shape = RoundedCornerShape(24.dp)
+  val shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
 
   Column(
     modifier = modifier
       .fillMaxWidth()
-      .shadow(14.dp, shape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
       .clip(shape)
-      .background(colors.surface.copy(alpha = 0.96f))
-      .border(1.dp, colors.hiddenBorder.copy(alpha = 0.45f), shape)
-      .padding(vertical = 8.dp, horizontal = 8.dp)
+      .background(sheetBg)
+      .pointerInput(Unit) { detectTapGestures { } }
+      .padding(top = 10.dp, bottom = 6.dp, start = 10.dp, end = 10.dp)
       .testTag("editor_overflow_panel")
   ) {
     PanelActionRow(
@@ -527,7 +540,7 @@ fun NoteOverflowMenuPanel(
     }
     HorizontalDivider(
       modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-      color = colors.accentSoft,
+      color = colors.muted.copy(alpha = 0.2f),
       thickness = 1.dp
     )
     PanelActionRow(

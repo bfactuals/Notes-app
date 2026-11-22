@@ -181,6 +181,10 @@ fun formatReminderChip(reminderMillis: Long): String {
   return fmt.format(Date(reminderMillis))
 }
 
+fun isReminderPast(reminderMillis: Long, nowMs: Long = System.currentTimeMillis()): Boolean {
+  return reminderMillis in 1L..nowMs
+}
+
 fun extractDoodleCount(content: String): Int {
   val match = Regex("\\[Doodle with (\\d+) strokes?\\]").find(content)
   return match?.groupValues?.getOrNull(1)?.toIntOrNull() ?: if (content.contains("[Doodle")) 3 else 0

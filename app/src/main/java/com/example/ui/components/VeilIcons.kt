@@ -1090,4 +1090,201 @@ object VeilIcons {
       drawLine(tint, Offset(9f * s, 19f * s), Offset(15f * s, 19f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
     }
   }
+
+  @Composable
+  fun RefreshOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      drawArc(tint, -40f, 290f, false, Offset(4.5f * s, 4.5f * s), Size(15f * s, 15f * s), style = stroke)
+      val head = Path().apply {
+        moveTo(19.5f * s, 4.8f * s)
+        lineTo(19.2f * s, 9.5f * s)
+        lineTo(14.5f * s, 9.2f * s)
+      }
+      drawPath(head, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun StarOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 1.9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val path = Path().apply {
+        moveTo(12f * s, 3.2f * s)
+        lineTo(14.7f * s, 8.7f * s)
+        lineTo(20.8f * s, 9.6f * s)
+        lineTo(16.4f * s, 13.8f * s)
+        lineTo(17.4f * s, 19.9f * s)
+        lineTo(12f * s, 17f * s)
+        lineTo(6.6f * s, 19.9f * s)
+        lineTo(7.6f * s, 13.8f * s)
+        lineTo(3.2f * s, 9.6f * s)
+        lineTo(9.3f * s, 8.7f * s)
+        close()
+      }
+      drawPath(path, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun ExternalLinkOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 18.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 2.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val box = Path().apply {
+        moveTo(18f * s, 13.5f * s)
+        lineTo(18f * s, 18.5f * s)
+        cubicTo(18f * s, 19.3f * s, 17.3f * s, 20f * s, 16.5f * s, 20f * s)
+        lineTo(5.5f * s, 20f * s)
+        cubicTo(4.7f * s, 20f * s, 4f * s, 19.3f * s, 4f * s, 18.5f * s)
+        lineTo(4f * s, 7.5f * s)
+        cubicTo(4f * s, 6.7f * s, 4.7f * s, 6f * s, 5.5f * s, 6f * s)
+        lineTo(10.5f * s, 6f * s)
+      }
+      drawPath(box, tint, style = stroke)
+      val arrow = Path().apply {
+        moveTo(14.5f * s, 4f * s)
+        lineTo(20f * s, 4f * s)
+        lineTo(20f * s, 9.5f * s)
+      }
+      drawPath(arrow, tint, style = stroke)
+      drawLine(tint, Offset(10.5f * s, 13.5f * s), Offset(19.5f * s, 4.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+    }
+  }
+
+  @Composable
+  fun ShieldCheckOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val shield = Path().apply {
+        moveTo(12f * s, 3.2f * s)
+        lineTo(19.5f * s, 6.2f * s)
+        lineTo(19.5f * s, 11.8f * s)
+        cubicTo(19.5f * s, 16.4f * s, 16.2f * s, 19.6f * s, 12f * s, 21f * s)
+        cubicTo(7.8f * s, 19.6f * s, 4.5f * s, 16.4f * s, 4.5f * s, 11.8f * s)
+        lineTo(4.5f * s, 6.2f * s)
+        close()
+      }
+      drawPath(shield, tint, style = stroke)
+      val check = Path().apply {
+        moveTo(8.8f * s, 12.2f * s)
+        lineTo(11f * s, 14.5f * s)
+        lineTo(15.5f * s, 9.8f * s)
+      }
+      drawPath(check, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun BugOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 1.9.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      drawRoundRect(tint, Offset(7.5f * s, 8f * s), Size(9f * s, 11.5f * s), CornerRadius(4.5f * s, 4.5f * s), style = stroke)
+      drawArc(tint, 180f, 180f, false, Offset(9f * s, 5f * s), Size(6f * s, 6f * s), style = stroke)
+      drawLine(tint, Offset(4f * s, 11.5f * s), Offset(7.5f * s, 11.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      drawLine(tint, Offset(16.5f * s, 11.5f * s), Offset(20f * s, 11.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      drawLine(tint, Offset(4.5f * s, 16f * s), Offset(7.5f * s, 15.2f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      drawLine(tint, Offset(16.5f * s, 15.2f * s), Offset(19.5f * s, 16f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      drawLine(tint, Offset(9.5f * s, 5.2f * s), Offset(7.5f * s, 3.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      drawLine(tint, Offset(14.5f * s, 5.2f * s), Offset(16.5f * s, 3.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+    }
+  }
+
+  @Composable
+  fun DownloadOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 2.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      drawLine(tint, Offset(12f * s, 4f * s), Offset(12f * s, 15f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      val head = Path().apply {
+        moveTo(8f * s, 11.2f * s)
+        lineTo(12f * s, 15.2f * s)
+        lineTo(16f * s, 11.2f * s)
+      }
+      drawPath(head, tint, style = stroke)
+      val tray = Path().apply {
+        moveTo(4.5f * s, 16f * s)
+        lineTo(4.5f * s, 19.2f * s)
+        lineTo(19.5f * s, 19.2f * s)
+        lineTo(19.5f * s, 16f * s)
+      }
+      drawPath(tray, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun HeartOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val heart = Path().apply {
+        moveTo(12f * s, 20f * s)
+        cubicTo(5f * s, 15.2f * s, 3.2f * s, 11.2f * s, 4.2f * s, 7.8f * s)
+        cubicTo(5.1f * s, 4.8f * s, 8.8f * s, 4f * s, 12f * s, 7.2f * s)
+        cubicTo(15.2f * s, 4f * s, 18.9f * s, 4.8f * s, 19.8f * s, 7.8f * s)
+        cubicTo(20.8f * s, 11.2f * s, 19f * s, 15.2f * s, 12f * s, 20f * s)
+        close()
+      }
+      drawPath(heart, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun ChevronRight(tint: Color, modifier: Modifier = Modifier, size: Dp = 18.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val p = Path().apply {
+        moveTo(9.5f * s, 6.5f * s)
+        lineTo(15f * s, 12f * s)
+        lineTo(9.5f * s, 17.5f * s)
+      }
+      drawPath(p, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun MailOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 21.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      drawRoundRect(tint, Offset(3.5f * s, 5.5f * s), Size(17f * s, 13f * s), CornerRadius(2.5f * s, 2.5f * s), style = stroke)
+      val flap = Path().apply {
+        moveTo(4.5f * s, 7f * s)
+        lineTo(12f * s, 12.8f * s)
+        lineTo(19.5f * s, 7f * s)
+      }
+      drawPath(flap, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun MegaphoneOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val horn = Path().apply {
+        moveTo(4f * s, 10f * s)
+        lineTo(10f * s, 10f * s)
+        lineTo(18.5f * s, 5.5f * s)
+        lineTo(18.5f * s, 18.5f * s)
+        lineTo(10f * s, 14f * s)
+        lineTo(4f * s, 14f * s)
+        close()
+      }
+      drawPath(horn, tint, style = stroke)
+      val handle = Path().apply {
+        moveTo(6.5f * s, 14f * s)
+        lineTo(8.2f * s, 19.2f * s)
+      }
+      drawPath(handle, tint, style = stroke)
+    }
+  }
 }

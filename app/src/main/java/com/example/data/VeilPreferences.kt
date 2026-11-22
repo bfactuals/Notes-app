@@ -6,6 +6,8 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -20,13 +22,13 @@ import javax.crypto.spec.PBEKeySpec
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "veil_prefs")
 
 data class ProFeaturesConfig(
-  val selfDestructEnabled: Boolean = true,
-  val inlineCalcEnabled: Boolean = true,
-  val autoEmptyTrashEnabled: Boolean = true,
-  val codeBlocksEnabled: Boolean = true,
-  val versionHistoryEnabled: Boolean = true,
-  val clipboardPillEnabled: Boolean = true,
-  val autoCategoriesEnabled: Boolean = true
+  val selfDestructEnabled: Boolean = false,
+  val inlineCalcEnabled: Boolean = false,
+  val autoEmptyTrashEnabled: Boolean = false,
+  val codeBlocksEnabled: Boolean = false,
+  val versionHistoryEnabled: Boolean = false,
+  val clipboardPillEnabled: Boolean = false,
+  val autoCategoriesEnabled: Boolean = false
 ) {
   val allEnabled: Boolean
     get() = selfDestructEnabled &&
@@ -53,7 +55,7 @@ class VeilPreferences(private val context: Context) {
     val MOVE_TICKED_TO_BOTTOM = booleanPreferencesKey("move_ticked_to_bottom")
     val HAPTIC_FEEDBACK_ENABLED = booleanPreferencesKey("haptic_feedback_enabled")
 
-    // Pro Features toggles
+    // Pro Features toggles & Free Gift experience
     val PRO_SELF_DESTRUCT = booleanPreferencesKey("pro_self_destruct")
     val PRO_INLINE_CALC = booleanPreferencesKey("pro_inline_calc")
     val PRO_AUTO_EMPTY_TRASH = booleanPreferencesKey("pro_auto_empty_trash")
@@ -61,10 +63,22 @@ class VeilPreferences(private val context: Context) {
     val PRO_VERSION_HISTORY = booleanPreferencesKey("pro_version_history")
     val PRO_CLIPBOARD_PILL = booleanPreferencesKey("pro_clipboard_pill")
     val PRO_AUTO_CATEGORIES = booleanPreferencesKey("pro_auto_categories")
+    val FIRST_INSTALL_TIME_MS = longPreferencesKey("first_install_time_ms")
+    val PRO_GIFT_RESOLVED = booleanPreferencesKey("pro_gift_resolved")
+    val PRO_GIFT_CLAIMED = booleanPreferencesKey("pro_gift_claimed")
 
     // Typography preferences
     val FONT_SIZE = stringPreferencesKey("font_size") // "small", "medium", "large"
     val FONT_STYLE = stringPreferencesKey("font_style") // "sans", "serif", "mono"
+
+    // Remote Config, Update System & GitHub Star Nudge
+    val CACHED_REMOTE_CONFIG_JSON = stringPreferencesKey("cached_remote_config_json")
+    val LAST_CONFIG_FETCH_MS = longPreferencesKey("last_config_fetch_ms")
+    val CACHED_VERSION_JSON = stringPreferencesKey("cached_version_json")
+    val LAST_VERSION_FETCH_MS = longPreferencesKey("last_version_fetch_ms")
+    val DISMISSED_ANNOUNCEMENT_HASH = stringPreferencesKey("dismissed_announcement_hash")
+    val TOTAL_NOTES_CREATED = intPreferencesKey("total_notes_created")
+    val STAR_NUDGE_DISMISSED = booleanPreferencesKey("star_nudge_dismissed")
   }
 
   val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -115,14 +129,26 @@ class VeilPreferences(private val context: Context) {
 
   val proFeatures: Flow<ProFeaturesConfig> = context.dataStore.data.map { prefs ->
     ProFeaturesConfig(
-      selfDestructEnabled = prefs[PRO_SELF_DESTRUCT] ?: true,
-      inlineCalcEnabled = prefs[PRO_INLINE_CALC] ?: true,
-      autoEmptyTrashEnabled = prefs[PRO_AUTO_EMPTY_TRASH] ?: true,
-      codeBlocksEnabled = prefs[PRO_CODE_BLOCKS] ?: true,
-      versionHistoryEnabled = prefs[PRO_VERSION_HISTORY] ?: true,
-      clipboardPillEnabled = prefs[PRO_CLIPBOARD_PILL] ?: true,
-      autoCategoriesEnabled = prefs[PRO_AUTO_CATEGORIES] ?: true
+      selfDestructEnabled = prefs[PRO_SELF_DESTRUCT] ?: false,
+      inlineCalcEnabled = prefs[PRO_INLINE_CALC] ?: false,
+      autoEmptyTrashEnabled = prefs[PRO_AUTO_EMPTY_TRASH] ?: false,
+      codeBlocksEnabled = prefs[PRO_CODE_BLOCKS] ?: false,
+      versionHistoryEnabled = prefs[PRO_VERSION_HISTORY] ?: false,
+      clipboardPillEnabled = prefs[PRO_CLIPBOARD_PILL] ?: false,
+      autoCategoriesEnabled = prefs[PRO_AUTO_CATEGORIES] ?: false
     )
+  }
+
+  val firstInstallTimeMs: Flow<Long> = context.dataStore.data.map { prefs ->
+    prefs[FIRST_INSTALL_TIME_MS] ?: 0L
+  }
+
+  val proGiftResolved: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    prefs[PRO_GIFT_RESOLVED] ?: false
+  }
+
+  val proGiftClaimed: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    prefs[PRO_GIFT_CLAIMED] ?: false
   }
 
   val fontSize: Flow<String> = context.dataStore.data.map { prefs ->
@@ -131,6 +157,18 @@ class VeilPreferences(private val context: Context) {
 
   val fontStyle: Flow<String> = context.dataStore.data.map { prefs ->
     prefs[FONT_STYLE] ?: "sans"
+  }
+
+  val dismissedAnnouncementHash: Flow<String> = context.dataStore.data.map { prefs ->
+    prefs[DISMISSED_ANNOUNCEMENT_HASH] ?: ""
+  }
+
+  val totalNotesCreated: Flow<Int> = context.dataStore.data.map { prefs ->
+    prefs[TOTAL_NOTES_CREATED] ?: 0
+  }
+
+  val starNudgeDismissed: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    prefs[STAR_NUDGE_DISMISSED] ?: false
   }
 
   suspend fun setThemeMode(mode: String) {
@@ -222,6 +260,40 @@ class VeilPreferences(private val context: Context) {
     }
   }
 
+  suspend fun ensureFirstInstallTimeRecorded(): Long {
+    var recorded = 0L
+    context.dataStore.edit { prefs ->
+      val existing = prefs[FIRST_INSTALL_TIME_MS] ?: 0L
+      if (existing <= 0L) {
+        recorded = System.currentTimeMillis()
+        prefs[FIRST_INSTALL_TIME_MS] = recorded
+      } else {
+        recorded = existing
+      }
+    }
+    return recorded
+  }
+
+  suspend fun claimProGift() {
+    context.dataStore.edit { prefs ->
+      prefs[PRO_SELF_DESTRUCT] = true
+      prefs[PRO_INLINE_CALC] = true
+      prefs[PRO_AUTO_EMPTY_TRASH] = true
+      prefs[PRO_CODE_BLOCKS] = true
+      prefs[PRO_VERSION_HISTORY] = true
+      prefs[PRO_CLIPBOARD_PILL] = true
+      prefs[PRO_AUTO_CATEGORIES] = true
+      prefs[PRO_GIFT_RESOLVED] = true
+      prefs[PRO_GIFT_CLAIMED] = true
+    }
+  }
+
+  suspend fun dismissProGift() {
+    context.dataStore.edit { prefs ->
+      prefs[PRO_GIFT_RESOLVED] = true
+    }
+  }
+
   suspend fun setAllProFeatures(enabled: Boolean) {
     context.dataStore.edit { prefs ->
       prefs[PRO_SELF_DESTRUCT] = enabled
@@ -231,6 +303,10 @@ class VeilPreferences(private val context: Context) {
       prefs[PRO_VERSION_HISTORY] = enabled
       prefs[PRO_CLIPBOARD_PILL] = enabled
       prefs[PRO_AUTO_CATEGORIES] = enabled
+      if (enabled) {
+        prefs[PRO_GIFT_RESOLVED] = true
+        prefs[PRO_GIFT_CLAIMED] = true
+      }
     }
   }
 
@@ -268,6 +344,51 @@ class VeilPreferences(private val context: Context) {
 
   suspend fun setFontStyle(style: String) {
     context.dataStore.edit { it[FONT_STYLE] = style }
+  }
+
+  suspend fun getCachedRemoteConfigJson(): String {
+    return context.dataStore.data.first()[CACHED_REMOTE_CONFIG_JSON] ?: ""
+  }
+
+  suspend fun getLastConfigFetchMs(): Long {
+    return context.dataStore.data.first()[LAST_CONFIG_FETCH_MS] ?: 0L
+  }
+
+  suspend fun saveCachedRemoteConfig(rawJson: String, fetchedAtMs: Long) {
+    context.dataStore.edit { prefs ->
+      prefs[CACHED_REMOTE_CONFIG_JSON] = rawJson
+      prefs[LAST_CONFIG_FETCH_MS] = fetchedAtMs
+    }
+  }
+
+  suspend fun getCachedVersionJson(): String {
+    return context.dataStore.data.first()[CACHED_VERSION_JSON] ?: ""
+  }
+
+  suspend fun getLastVersionFetchMs(): Long {
+    return context.dataStore.data.first()[LAST_VERSION_FETCH_MS] ?: 0L
+  }
+
+  suspend fun saveCachedVersionInfo(rawJson: String, fetchedAtMs: Long) {
+    context.dataStore.edit { prefs ->
+      prefs[CACHED_VERSION_JSON] = rawJson
+      prefs[LAST_VERSION_FETCH_MS] = fetchedAtMs
+    }
+  }
+
+  suspend fun dismissAnnouncement(hash: String) {
+    context.dataStore.edit { it[DISMISSED_ANNOUNCEMENT_HASH] = hash }
+  }
+
+  suspend fun incrementTotalNotesCreated() {
+    context.dataStore.edit { prefs ->
+      val current = prefs[TOTAL_NOTES_CREATED] ?: 0
+      prefs[TOTAL_NOTES_CREATED] = current + 1
+    }
+  }
+
+  suspend fun dismissStarNudge() {
+    context.dataStore.edit { it[STAR_NUDGE_DISMISSED] = true }
   }
 
   private fun pbkdf2Hash(password: String, salt: ByteArray): String {

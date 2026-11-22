@@ -37,7 +37,9 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
   viewModel: VeilViewModel,
-  onBack: () -> Unit
+  onBack: () -> Unit,
+  onOpenProFeatures: () -> Unit,
+  onOpenAboutSupport: () -> Unit
 ) {
   val colors = VeilThemeTokens.colors
   val context = LocalContext.current
@@ -53,9 +55,11 @@ fun SettingsScreen(
   val moveTickedToBottom by viewModel.moveTickedToBottom.collectAsState()
   val hapticFeedbackEnabled by viewModel.hapticFeedbackEnabled.collectAsState()
   val proFeatures by viewModel.proFeatures.collectAsState()
+  val proGiftClaimed by viewModel.proGiftClaimed.collectAsState()
   val fontSize by viewModel.fontSize.collectAsState()
   val fontStyle by viewModel.fontStyle.collectAsState()
   val hasExistingPassword = secretPasswordHash.isNotEmpty()
+  val isProUnlocked = proGiftClaimed || proFeatures.allEnabled
 
   var showSecretModal by remember { mutableStateOf(false) }
   var showThemeDialog by remember { mutableStateOf(false) }
@@ -467,109 +471,60 @@ fun SettingsScreen(
         }
 
         item {
-          Text(
-            text = "PRO FEATURES",
-            style = VeilTextStyles.sectionLabel,
-            color = colors.muted,
-            modifier = Modifier.padding(top = 8.dp)
-          )
-        }
-
-        item {
-          SettingsCardGroup {
-            SettingsSwitchRow(
-              title = "Enable All Pro Features",
-              subtitle = "Toggle all modular power tools at once",
-              checked = proFeatures.allEnabled,
-              onCheckedChange = { enabled ->
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setAllProFeatures(enabled)
-              },
-              icon = { VeilIcons.SparklesOutline(tint = colors.accent, size = 22.dp) },
-              tag = "pro_enable_all_switch"
-            )
-            HorizontalDivider(
-              modifier = Modifier.padding(horizontal = 14.dp),
-              color = colors.accentSoft,
-              thickness = 1.dp
-            )
-            SettingsSwitchRow(
-              title = "Self-Destructing Notes",
-              subtitle = "Quick timer button next to + for auto-deleting notes",
-              checked = proFeatures.selfDestructEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProSelfDestruct(it)
-              },
-              icon = { VeilIcons.HourglassOutline(tint = colors.text, size = 21.dp) },
-              tag = "pro_self_destruct_switch"
-            )
-            SettingsSwitchRow(
-              title = "Smart Inline Calculator",
-              subtitle = "Auto-solve math ending with = + Space or Enter",
-              checked = proFeatures.inlineCalcEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProInlineCalc(it)
-              },
-              icon = { VeilIcons.CalculatorOutline(tint = colors.text, size = 21.dp) },
-              tag = "pro_inline_calc_switch"
-            )
-            SettingsSwitchRow(
-              title = "30-Day Auto-Empty Trash",
-              subtitle = "Permanently purge trashed notes older than 30 days",
-              checked = proFeatures.autoEmptyTrashEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProAutoEmptyTrash(it)
-              },
-              icon = { VeilIcons.Trash(tint = colors.text, size = 21.dp) },
-              tag = "pro_auto_empty_trash_switch"
-            )
-            SettingsSwitchRow(
-              title = "Copyable Prompt / Code Blocks",
-              subtitle = "Insert shaded snippet cards with 1-tap Copy button",
-              checked = proFeatures.codeBlocksEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProCodeBlocks(it)
-              },
-              icon = { VeilIcons.CodeOutline(tint = colors.text, size = 21.dp) },
-              tag = "pro_code_blocks_switch"
-            )
-            SettingsSwitchRow(
-              title = "Local Version History",
-              subtitle = "Keep last 5 snapshots per note with 1-tap Restore",
-              checked = proFeatures.versionHistoryEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProVersionHistory(it)
-              },
-              icon = { VeilIcons.HistoryOutline(tint = colors.text, size = 21.dp) },
-              tag = "pro_version_history_switch"
-            )
-            SettingsSwitchRow(
-              title = "Clipboard Quick-Save Pill",
-              subtitle = "Silently offer to save newly copied text on open",
-              checked = proFeatures.clipboardPillEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProClipboardPill(it)
-              },
-              icon = { VeilIcons.ClipboardOutline(tint = colors.text, size = 21.dp) },
-              tag = "pro_clipboard_pill_switch"
-            )
-            SettingsSwitchRow(
-              title = "Smart Auto-Categories",
-              subtitle = "Offline filter chips for Links, Expenses & media",
-              checked = proFeatures.autoCategoriesEnabled,
-              onCheckedChange = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                viewModel.setProAutoCategories(it)
-              },
-              icon = { VeilIcons.Tag(tint = colors.text, size = 21.dp) },
-              tag = "pro_auto_categories_switch"
-            )
+          val proCardShape = RoundedCornerShape(18.dp)
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .padding(top = 6.dp)
+              .shadow(3.dp, proCardShape, ambientColor = colors.shadow, spotColor = colors.shadow)
+              .clip(proCardShape)
+              .background(colors.accentSoft.copy(alpha = if (colors.isDark) 0.58f else 0.78f))
+              .border(1.dp, colors.accent.copy(alpha = 0.4f), proCardShape)
+              .tactilePress(scaleDown = 0.97f, hapticOnClick = true, role = Role.Button, onClick = onOpenProFeatures)
+              .padding(horizontal = 16.dp, vertical = 16.dp)
+              .testTag("settings_pro_features_card"),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+          ) {
+            Box(
+              modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.accent.copy(alpha = 0.16f)),
+              contentAlignment = Alignment.Center
+            ) {
+              VeilIcons.SparklesOutline(tint = colors.accent, size = 21.dp)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = "✨ Pro Features",
+                style = VeilTextStyles.cardTitle.copy(fontSize = 16.sp, fontWeight = FontWeight.SemiBold),
+                color = colors.text
+              )
+              Spacer(modifier = Modifier.height(2.dp))
+              Text(
+                text = "Self-destruct timer, calculator, version history & more",
+                style = VeilTextStyles.meta,
+                color = colors.muted
+              )
+            }
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (isProUnlocked) colors.accent else colors.surface)
+                .border(1.dp, colors.accent.copy(alpha = 0.45f), RoundedCornerShape(10.dp))
+                .padding(horizontal = 9.dp, vertical = 4.dp)
+            ) {
+              Text(
+                text = if (isProUnlocked) "UNLOCKED" else "FREE",
+                style = VeilTextStyles.labelChip.copy(
+                  fontSize = 10.5.sp,
+                  fontWeight = FontWeight.Bold,
+                  letterSpacing = 0.5.sp
+                ),
+                color = if (isProUnlocked) colors.surface else colors.accent
+              )
+            }
           }
         }
 
@@ -624,31 +579,6 @@ fun SettingsScreen(
 
         item {
           Text(
-            text = "PRIVACY",
-            style = VeilTextStyles.sectionLabel,
-            color = colors.muted,
-            modifier = Modifier.padding(top = 8.dp)
-          )
-        }
-
-        item {
-          SettingsCardGroup {
-            // Keep Panic Hide; NO Secret Password option anywhere in Settings!
-            SettingsRow(
-              title = "Panic Hide",
-              subtitle = "Quickly clear active search & reset view",
-              icon = { VeilIcons.EyeOff(tint = colors.text, size = 22.dp) },
-              onClick = {
-                viewModel.panicHide()
-                scope.launch { snackbarHostState.showSnackbar("View cleared.") }
-              },
-              tag = "panic_mode_setting_item"
-            )
-          }
-        }
-
-        item {
-          Text(
             text = "BACKUP & RESTORE",
             style = VeilTextStyles.sectionLabel,
             color = colors.muted,
@@ -691,6 +621,18 @@ fun SettingsScreen(
 
         item {
           SettingsCardGroup {
+            SettingsRow(
+              title = "About & Support",
+              subtitle = "Creator, links, changelog & support",
+              icon = { VeilIcons.HeartOutline(tint = colors.text, size = 22.dp) },
+              onClick = onOpenAboutSupport,
+              tag = "settings_about_support_item"
+            )
+            HorizontalDivider(
+              modifier = Modifier.padding(horizontal = 14.dp),
+              color = colors.accentSoft,
+              thickness = 1.dp
+            )
             // Zero-hint stealth tap trigger: 5 rapid taps if unset, 7 rapid taps if already set
             Row(
               modifier = Modifier

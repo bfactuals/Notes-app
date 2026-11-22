@@ -122,6 +122,71 @@ data class VeilColors(
     else -> cardPlain
   }
 
+  /**
+   * Paired Material You tonal button / chip container color for every note color:
+   * - Light Mode: slightly deeper/richer shade of the note hue (cool-gray on plain)
+   * - Dark Mode: slightly lighter/elevated tint of the note hue (elevated charcoal on plain)
+   */
+  fun noteTonalColor(colorKey: String): Color = if (isDark) {
+    when (colorKey.lowercase()) {
+      "yellow" -> Color(0xFF5A5029)
+      "lavender" -> Color(0xFF3F3B6B)
+      "mint" -> Color(0xFF2B5243)
+      "peach" -> Color(0xFF5E3D31)
+      "blue" -> Color(0xFF2A4361)
+      "pink" -> Color(0xFF5A314A)
+      "teal" -> Color(0xFF265057)
+      "coral" -> Color(0xFF633535)
+      "stone" -> Color(0xFF3A3A4B)
+      else -> Color(0xFF232336)
+    }
+  } else {
+    when (colorKey.lowercase()) {
+      "yellow" -> Color(0xFFF3E298)
+      "lavender" -> Color(0xFFD5D1FC)
+      "mint" -> Color(0xFFBBEAD2)
+      "peach" -> Color(0xFFF9CDB9)
+      "blue" -> Color(0xFFC1DBFC)
+      "pink" -> Color(0xFFF6C6DB)
+      "teal" -> Color(0xFFB6E5E7)
+      "coral" -> Color(0xFFFAC6BC)
+      "stone" -> Color(0xFFDBD9D1)
+      else -> Color(0xFFE7E7F1)
+    }
+  }
+
+  /**
+   * 100% opaque tonal surface for seamless docked sheets (Color/Background picker, Insert, Timer, Menu)
+   * matching the active note hue so zero text bleeds through from behind.
+   */
+  fun noteSheetColor(colorKey: String): Color = if (isDark) {
+    when (colorKey.lowercase()) {
+      "yellow" -> Color(0xFF4E4523)
+      "lavender" -> Color(0xFF35325C)
+      "mint" -> Color(0xFF244539)
+      "peach" -> Color(0xFF523429)
+      "blue" -> Color(0xFF233952)
+      "pink" -> Color(0xFF4E2A40)
+      "teal" -> Color(0xFF20444A)
+      "coral" -> Color(0xFF562D2D)
+      "stone" -> Color(0xFF313140)
+      else -> Color(0xFF19192A)
+    }
+  } else {
+    when (colorKey.lowercase()) {
+      "yellow" -> Color(0xFFFAECAE)
+      "lavender" -> Color(0xFFDFDCFF)
+      "mint" -> Color(0xFFC9F0DC)
+      "peach" -> Color(0xFFFCD8C7)
+      "blue" -> Color(0xFFCFE3FF)
+      "pink" -> Color(0xFFF9D3E4)
+      "teal" -> Color(0xFFC5ECEE)
+      "coral" -> Color(0xFFFDD3CA)
+      "stone" -> Color(0xFFE3E1DA)
+      else -> Color(0xFFEEEEF6)
+    }
+  }
+
   fun drawingPalette(): List<Color> = listOf(
     accent,
     doodlePink,
