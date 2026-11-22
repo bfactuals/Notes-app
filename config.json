@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "about": {
+    "creatorName": "Bfactuals",
+    "bio": "Building clean, lightweight, privacy-first apps.",
+    "avatarUrl": "",
+    "changelog": "v1.0: Initial release with Stealth Vault, Pro Features, and Offline Notes."
+  },
+  "socialLinks": {
+    "instagram": {
+      "enabled": true,
+      "label": "Instagram",
+      "url": "https://instagram.com/bfactuals"
+    },
+    "telegram": {
+      "enabled": true,
+      "label": "Telegram",
+      "url": "https://t.me/bfactuals"
+    },
+    "youtube": {
+      "enabled": false,
+      "label": "YouTube",
+      "url": ""
+    },
+    "website": {
+      "enabled": false,
+      "label": "Website",
+      "url": ""
+    },
+    "githubRepo": {
+      "enabled": true,
+      "label": "Star on GitHub",
+      "url": "https://github.com/bfactuals/Notes-app"
+    }
+  },
+  "contact": {
+    "supportEmail": "",
+    "bugReportUrl": "https://t.me/bfactuals"
+  },
+  "legal": {
+    "privacyPolicyUrl": "",
+    "termsUrl": ""
+  },
+  "customLinks": [],
+  "support": {
+    "enabled": false,
+    "title": "Support the Developer",
+    "description": "If you enjoy this free, ad-free app, you can support its development.",
+    "upiEnabled": false,
+    "upiId": "",
+    "qrImageUrl": "",
+    "paymentLinkEnabled": false,
+    "paymentUrl": "",
+    "showCustomMessage": true,
+    "customMessage": "Thank you for supporting this project!"
+  },
+  "announcements": {
+    "enabled": false,
+    "title": "",
+    "message": "",
+    "link": ""
+  },
+  "appSettings": {
+    "maintenanceMode": false,
+    "maintenanceMessage": ""
+  }
+}
