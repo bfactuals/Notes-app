@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.BackHandler
@@ -15,8 +16,10 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -28,7 +31,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
@@ -61,17 +66,20 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick as semanticsOnClick
+import androidx.compose.ui.semantics.onLongClick as semanticsOnLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -91,8 +99,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.RemoteConfigValidator
+import com.example.data.SocialLinksConfig
 import com.example.ui.components.ArchiveUndoToast
 import com.example.ui.components.ClipboardQuickSavePill
+import com.example.ui.components.GiftProMilestoneCard
 import com.example.ui.components.GitHubStarNudgeCard
 import com.example.ui.components.HomeAnnouncementBanner
 import com.example.ui.components.HomeSelectionTopBar
@@ -141,6 +151,7 @@ fun HomeScreen(
   onNoteClick: (Long) -> Unit,
   onCreateNoteWithMode: (String) -> Unit,
   onOpenSettings: () -> Unit,
+  onOpenAboutSupport: () -> Unit,
   onOpenArchive: () -> Unit,
   onOpenTrash: () -> Unit
 ) {
@@ -171,6 +182,7 @@ fun HomeScreen(
   val dismissedAnnouncementHash by viewModel.dismissedAnnouncementHash.collectAsState()
   val totalNotesCreated by viewModel.totalNotesCreated.collectAsState()
   val starNudgeDismissed by viewModel.starNudgeDismissed.collectAsState()
+  val giftProMilestoneDismissed by viewModel.giftProMilestoneDismissed.collectAsState()
 
   var themeButtonCenter by remember { mutableStateOf(Offset.Unspecified) }
 
@@ -355,14 +367,20 @@ fun HomeScreen(
       "modified_desc" -> notes.sortedByDescending { it.updatedAt }
       "modified_asc" -> notes.sortedBy { it.updatedAt }
       else -> {
-        if (customNoteOrder.isEmpty()) {
-          notes.sortedByDescending { it.updatedAt }
-        } else {
-          val orderMap = customNoteOrder.withIndex().associate { (i, id) -> id to i }
-          notes.sortedWith(
-            compareBy<NoteEntity> { orderMap[it.id] ?: Int.MAX_VALUE }
+        val hasRoomSortOrder = notes.any { it.sortOrder != 0 }
+        when {
+          hasRoomSortOrder -> notes.sortedWith(
+            compareBy<NoteEntity> { it.sortOrder }
               .thenByDescending { it.updatedAt }
           )
+          customNoteOrder.isNotEmpty() -> {
+            val orderMap = customNoteOrder.withIndex().associate { (i, id) -> id to i }
+            notes.sortedWith(
+              compareBy<NoteEntity> { orderMap[it.id] ?: Int.MAX_VALUE }
+                .thenByDescending { it.updatedAt }
+            )
+          }
+          else -> notes.sortedByDescending { it.updatedAt }
         }
       }
     }
@@ -375,11 +393,15 @@ fun HomeScreen(
     sortNotesList(filteredActive.filter { !it.isPinned })
   }
 
-  // Live drag-and-drop reordering state
+  // Live drag-and-drop reordering state (tracked in root coordinates with floating overlay)
   var draggingNoteId by remember { mutableStateOf<Long?>(null) }
+  var draggingNoteSnapshot by remember { mutableStateOf<NoteEntity?>(null) }
   var draggingIsPinned by remember { mutableStateOf(false) }
-  var dragOffset by remember { mutableStateOf(Offset.Zero) }
-  var longPressStartedSelection by remember { mutableStateOf(false) }
+  var dragInitialBoundsInRoot by remember { mutableStateOf<Rect?>(null) }
+  var dragTotalDelta by remember { mutableStateOf(Offset.Zero) }
+  var gridContainerTopLeftInRoot by remember { mutableStateOf(Offset.Zero) }
+  var lastSwappedTargetId by remember { mutableStateOf<Long?>(null) }
+  var lastSwapTimeMs by remember { mutableLongStateOf(0L) }
   var livePinnedIds by remember { mutableStateOf<List<Long>>(emptyList()) }
   var liveOtherIds by remember { mutableStateOf<List<Long>>(emptyList()) }
   val itemBounds = remember { mutableStateMapOf<Long, Rect>() }
@@ -623,6 +645,15 @@ fun HomeScreen(
               onOpenSettings()
             }
           )
+          DrawerRowItem(
+            label = "About & Support",
+            selected = false,
+            icon = { tint -> VeilIcons.HeartOutline(tint = tint, size = 22.dp) },
+            onClick = {
+              scope.launch { drawerState.close() }
+              onOpenAboutSupport()
+            }
+          )
         }
       }
     }
@@ -636,14 +667,21 @@ fun HomeScreen(
         val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val effectiveTopPadding = if (statusBarTop > 44.dp) statusBarTop + 12.dp else 56.dp
 
-        // Animated Top Header: transitions smoothly between Search/Sort/Theme Bar and Upgraded Selection Bar
+        // Animated Top Header: smooth spring fade + subtle slide between Search Bar and Multi-Select Bar
         AnimatedContent(
           targetState = selectedIds.isNotEmpty(),
           transitionSpec = {
-            (fadeIn(tween(if (reduceMotion) 0 else 180)) +
-              slideInVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy)) { -it / 4 }) togetherWith
-              (fadeOut(tween(if (reduceMotion) 0 else 140)) +
-                slideOutVertically { -it / 4 })
+            val slideIn = slideInVertically(
+              animationSpec = if (reduceMotion) tween(0) else spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMedium
+              )
+            ) { -it / 4 }
+            val slideOut = slideOutVertically(
+              animationSpec = tween(if (reduceMotion) 0 else 150, easing = VeilEasing)
+            ) { -it / 5 }
+            (fadeIn(tween(if (reduceMotion) 0 else 190, easing = VeilEasing)) + slideIn) togetherWith
+              (fadeOut(tween(if (reduceMotion) 0 else 140, easing = VeilEasing)) + slideOut)
           },
           label = "top_bar_selection_switch",
           modifier = Modifier
@@ -652,9 +690,12 @@ fun HomeScreen(
         ) { isSelecting ->
           if (isSelecting) {
             val allPinned = selectedNotes.isNotEmpty() && selectedNotes.all { it.isPinned }
+            val allVisibleIds = remember(allVisibleNotes) { allVisibleNotes.map { it.id } }
+            val allSelected = allVisibleIds.isNotEmpty() && allVisibleIds.all { selectedIds.contains(it) }
             HomeSelectionTopBar(
               selectedCount = selectedIds.size,
               allPinned = allPinned,
+              allSelected = allSelected,
               enableSharing = enableSharing,
               onClearSelection = { viewModel.clearSelection() },
               onTogglePin = {
@@ -664,6 +705,9 @@ fun HomeScreen(
               onOpenReminder = { showSelectionReminderDialog = true },
               onOpenColorPicker = { showSelectionColorDialog = true },
               onOpenLabelManager = { showSelectionLabelDialog = true },
+              onSelectAll = {
+                viewModel.selectAllNotes(allVisibleIds)
+              },
               onArchive = {
                 val snapshot = selectedNotes.toList()
                 snapshot.forEach { viewModel.archiveNote(it) }
@@ -826,8 +870,16 @@ fun HomeScreen(
           }
         }
 
-        // Slim offline Smart Auto-Categories filter chips directly below Search Bar
-        if (proFeatures.autoCategoriesEnabled && selectedIds.isEmpty()) {
+        // Slim offline Smart Auto-Categories filter chips with smooth spring fade + slide animation
+        AnimatedVisibility(
+          visible = proFeatures.autoCategoriesEnabled && selectedIds.isEmpty(),
+          enter = fadeIn(tween(if (reduceMotion) 0 else 200, easing = VeilEasing)) +
+            expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)) +
+            slideInVertically(tween(if (reduceMotion) 0 else 200, easing = VeilEasing)) { -it / 4 },
+          exit = fadeOut(tween(if (reduceMotion) 0 else 150)) +
+            shrinkVertically(tween(if (reduceMotion) 0 else 160)) +
+            slideOutVertically(tween(if (reduceMotion) 0 else 150)) { -it / 4 }
+        ) {
           SmartCategoryFilterRow(
             selectedCategory = selectedCategory,
             counts = smartCategoryCounts,
@@ -848,9 +900,38 @@ fun HomeScreen(
           onDismiss = { viewModel.dismissAnnouncement(announcement.contentHash) }
         )
 
+        // 10-Notes Milestone "Gift Free Pro" Reminder Card (permanently dismissible via DataStore)
+        val shareDownloadUrl = remember(remoteConfig.socialLinks.githubRepo) {
+          val repo = remoteConfig.socialLinks.githubRepo
+            .takeIf { RemoteConfigValidator.isValidHttpsUrl(it) }
+            ?: SocialLinksConfig.DEFAULT_GITHUB_REPO
+          "${repo.trimEnd('/')}/releases/latest"
+        }
+        val showGiftProMilestone = selectedIds.isEmpty() &&
+          activeNotes.size >= 10 &&
+          !giftProMilestoneDismissed
+        GiftProMilestoneCard(
+          visible = showGiftProMilestone,
+          onShareGift = {
+            val shareText = "I've been using Veil Notes — a fast, offline-first, ad-free notes app with Pro features completely free forever. Try it here:\n$shareDownloadUrl"
+            val intent = Intent(Intent.ACTION_SEND).apply {
+              type = "text/plain"
+              putExtra(Intent.EXTRA_SUBJECT, "Try Veil Notes (Free Pro)")
+              putExtra(Intent.EXTRA_TEXT, shareText)
+            }
+            runCatching {
+              context.startActivity(Intent.createChooser(intent, "Share Gift"))
+            }
+          },
+          onDismiss = {
+            viewModel.dismissGiftProMilestone()
+          }
+        )
+
         // Smart GitHub Star Nudge Card — shown ONLY ONCE ever after the user creates their 5th note
         val githubRepoUrl = remoteConfig.socialLinks.githubRepo
         val showStarNudge = selectedIds.isEmpty() &&
+          !showGiftProMilestone &&
           totalNotesCreated >= 5 &&
           !starNudgeDismissed &&
           RemoteConfigValidator.isValidHttpsUrl(githubRepoUrl)
@@ -866,7 +947,13 @@ fun HomeScreen(
         )
 
         // Active Reminders / Label filter indicator pill
-        if (currentDrawerScreen == "reminders" || selectedLabelFilter != null || currentDrawerScreen == "labels") {
+        AnimatedVisibility(
+          visible = currentDrawerScreen == "reminders" || selectedLabelFilter != null || currentDrawerScreen == "labels",
+          enter = fadeIn(tween(if (reduceMotion) 0 else 180)) +
+            expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)),
+          exit = fadeOut(tween(if (reduceMotion) 0 else 140)) +
+            shrinkVertically(tween(if (reduceMotion) 0 else 150))
+        ) {
           Row(
             modifier = Modifier
               .fillMaxWidth()
@@ -939,230 +1026,348 @@ fun HomeScreen(
           }
         } else {
           val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-          LazyVerticalStaggeredGrid(
-            columns = StaggeredGridCells.Fixed(if (isGridView) 2 else 1),
-            userScrollEnabled = draggingNoteId == null,
+          val density = LocalDensity.current
+
+          fun handleLiveReorderSwap(draggedId: Long, isPinnedSection: Boolean, totalOffset: Offset) {
+            dragTotalDelta = totalOffset
+            val initRect = dragInitialBoundsInRoot ?: return
+            val liveCenter = initRect.center + totalOffset
+            val currentList = if (isPinnedSection) livePinnedIds else liveOtherIds
+            val nowMs = System.currentTimeMillis()
+            val targetId = currentList.firstOrNull { candidateId ->
+              if (candidateId == draggedId) return@firstOrNull false
+              val rect = itemBounds[candidateId] ?: return@firstOrNull false
+              val insetX = rect.width * 0.10f
+              val insetY = rect.height * 0.10f
+              liveCenter.x in (rect.left + insetX)..(rect.right - insetX) &&
+                liveCenter.y in (rect.top + insetY)..(rect.bottom - insetY)
+            }
+            if (targetId == null) {
+              if (nowMs - lastSwapTimeMs > 180L) {
+                lastSwappedTargetId = null
+              }
+              return
+            }
+            if (targetId == lastSwappedTargetId && nowMs - lastSwapTimeMs < 240L) {
+              return
+            }
+            val fromIdx = currentList.indexOf(draggedId)
+            val toIdx = currentList.indexOf(targetId)
+            if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
+              val reordered = currentList.toMutableList().apply {
+                add(toIdx, removeAt(fromIdx))
+              }
+              if (isPinnedSection) {
+                livePinnedIds = reordered
+              } else {
+                liveOtherIds = reordered
+              }
+              lastSwappedTargetId = targetId
+              lastSwapTimeMs = nowMs
+              haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            }
+          }
+
+          Box(
             modifier = Modifier
               .weight(1f)
-              .fillMaxWidth(),
-            contentPadding = PaddingValues(
-              start = 16.dp,
-              end = 16.dp,
-              top = 8.dp,
-              bottom = 132.dp + navBottom
-            ),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalItemSpacing = 12.dp
+              .fillMaxWidth()
+              .onGloballyPositioned { coords ->
+                gridContainerTopLeftInRoot = coords.positionInRoot()
+              }
           ) {
-            // Silently reveal hidden notes when unlocked via Enter/Search (NO green banner!)
-            if (areHiddenUnlocked && filteredHiddenNotes.isNotEmpty()) {
-              item(span = StaggeredGridItemSpan.FullLine, key = "header_hidden") {
-                SectionLabel("HIDDEN NOTES")
+            LazyVerticalStaggeredGrid(
+              columns = StaggeredGridCells.Fixed(if (isGridView) 2 else 1),
+              userScrollEnabled = draggingNoteId == null,
+              modifier = Modifier.fillMaxSize(),
+              contentPadding = PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 8.dp,
+                bottom = 132.dp + navBottom
+              ),
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+              verticalItemSpacing = 12.dp
+            ) {
+              val placementSpec = spring<androidx.compose.ui.unit.IntOffset>(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessMediumLow
+              )
+
+              // Silently reveal hidden notes when unlocked via Enter/Search (NO green banner!)
+              if (areHiddenUnlocked && filteredHiddenNotes.isNotEmpty()) {
+                item(span = StaggeredGridItemSpan.FullLine, key = "header_hidden") {
+                  SectionLabel(
+                    text = "HIDDEN NOTES",
+                    modifier = if (reduceMotion) Modifier else Modifier.animateItem(
+                      fadeInSpec = tween(200),
+                      placementSpec = placementSpec,
+                      fadeOutSpec = tween(160)
+                    )
+                  )
+                }
+
+                itemsIndexed(
+                  items = filteredHiddenNotes,
+                  span = { _, _ -> StaggeredGridItemSpan.FullLine },
+                  key = { _, note -> note.id }
+                ) { index, note ->
+                  StaggeredFadeRise(
+                    index = index,
+                    reduceMotion = reduceMotion,
+                    modifier = if (reduceMotion) Modifier else Modifier.animateItem(
+                      fadeInSpec = tween(220, easing = VeilEasing),
+                      placementSpec = placementSpec,
+                      fadeOutSpec = tween(180, easing = VeilEasing)
+                    )
+                  ) {
+                    HiddenNoteCard(
+                      note = note,
+                      isSelected = selectedIds.contains(note.id),
+                      moveTickedToBottom = moveTickedToBottom,
+                      showSelfDestructBadge = proFeatures.selfDestructEnabled,
+                      onClick = {
+                        if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
+                        else onNoteClick(note.id)
+                      },
+                      onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.selectNote(note.id)
+                      }
+                    )
+                  }
+                }
               }
 
-              itemsIndexed(
-                items = filteredHiddenNotes,
-                span = { _, _ -> StaggeredGridItemSpan.FullLine },
-                key = { _, note -> "hidden_${note.id}" }
-              ) { index, note ->
-                StaggeredFadeRise(
-                  index = index,
-                  reduceMotion = reduceMotion,
-                  modifier = Modifier.animateItem()
-                ) {
-                  HiddenNoteCard(
-                    note = note,
-                    isSelected = selectedIds.contains(note.id),
-                    moveTickedToBottom = moveTickedToBottom,
-                    showSelfDestructBadge = proFeatures.selfDestructEnabled,
-                    onClick = {
-                      if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
-                      else onNoteClick(note.id)
-                    },
-                    onLongClick = {
-                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                      viewModel.toggleNoteSelection(note.id)
-                    }
+              // PINNED SECTION (supports Swipe-to-Archive + Long-Press Multi-Select + Drag-and-Drop Reorder)
+              if (pinnedNotes.isNotEmpty()) {
+                item(span = StaggeredGridItemSpan.FullLine, key = "header_pinned") {
+                  SectionLabel(
+                    text = "PINNED",
+                    modifier = if (reduceMotion) Modifier else Modifier.animateItem(
+                      fadeInSpec = tween(200),
+                      placementSpec = placementSpec,
+                      fadeOutSpec = tween(160)
+                    )
                   )
+                }
+                itemsIndexed(
+                  items = pinnedNotes,
+                  key = { _, note -> note.id }
+                ) { index, note ->
+                  val isDraggingThis = draggingNoteId == note.id
+                  val canDragThis = selectedIds.isEmpty() || (selectedIds.size == 1 && selectedIds.contains(note.id))
+                  StaggeredFadeRise(
+                    index = index,
+                    reduceMotion = reduceMotion,
+                    modifier = Modifier
+                      .zIndex(if (isDraggingThis) 10f else 0f)
+                      .then(
+                        if (reduceMotion) Modifier
+                        else Modifier.animateItem(
+                          fadeInSpec = tween(220, easing = VeilEasing),
+                          placementSpec = placementSpec,
+                          fadeOutSpec = tween(180, easing = VeilEasing)
+                        )
+                      )
+                  ) {
+                    InteractiveHomeNoteCard(
+                      note = note,
+                      isSelected = selectedIds.contains(note.id),
+                      isDragging = isDraggingThis,
+                      swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
+                      canStartDrag = canDragThis,
+                      moveTickedToBottom = moveTickedToBottom,
+                      showSelfDestructBadge = proFeatures.selfDestructEnabled,
+                      onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
+                      onClick = {
+                        if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
+                        else onNoteClick(note.id)
+                      },
+                      onSwipeArchive = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.archiveNote(note)
+                        showTransientToast("Archived", archived = listOf(note))
+                      },
+                      onLongPressSelect = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.selectNote(note.id)
+                      },
+                      onLongPressDragStart = { initialOffset ->
+                        viewModel.clearSelection()
+                        livePinnedIds = pinnedNotes.map { it.id }
+                        liveOtherIds = otherNotes.map { it.id }
+                        draggingNoteId = note.id
+                        draggingNoteSnapshot = note
+                        draggingIsPinned = true
+                        dragInitialBoundsInRoot = itemBounds[note.id]
+                        dragTotalDelta = initialOffset
+                        lastSwappedTargetId = null
+                        lastSwapTimeMs = 0L
+                      },
+                      onLongPressDrag = { totalOffset ->
+                        handleLiveReorderSwap(note.id, isPinnedSection = true, totalOffset = totalOffset)
+                      },
+                      onLongPressDragEnd = { commitOrder ->
+                        if (commitOrder) {
+                          viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
+                        }
+                        draggingNoteId = null
+                        draggingNoteSnapshot = null
+                        dragInitialBoundsInRoot = null
+                        dragTotalDelta = Offset.Zero
+                        lastSwappedTargetId = null
+                      }
+                    )
+                  }
+                }
+              }
+
+              // OTHERS SECTION (supports Swipe-to-Archive + Long-Press Multi-Select + Drag-and-Drop Reorder)
+              if (otherNotes.isNotEmpty()) {
+                if (pinnedNotes.isNotEmpty() || (areHiddenUnlocked && filteredHiddenNotes.isNotEmpty())) {
+                  item(span = StaggeredGridItemSpan.FullLine, key = "header_others") {
+                    SectionLabel(
+                      text = "OTHERS",
+                      modifier = if (reduceMotion) Modifier else Modifier.animateItem(
+                        fadeInSpec = tween(200),
+                        placementSpec = placementSpec,
+                        fadeOutSpec = tween(160)
+                      )
+                    )
+                  }
+                }
+                itemsIndexed(
+                  items = otherNotes,
+                  key = { _, note -> note.id }
+                ) { index, note ->
+                  val isDraggingThis = draggingNoteId == note.id
+                  val canDragThis = selectedIds.isEmpty() || (selectedIds.size == 1 && selectedIds.contains(note.id))
+                  StaggeredFadeRise(
+                    index = index,
+                    reduceMotion = reduceMotion,
+                    modifier = Modifier
+                      .zIndex(if (isDraggingThis) 10f else 0f)
+                      .then(
+                        if (reduceMotion) Modifier
+                        else Modifier.animateItem(
+                          fadeInSpec = tween(220, easing = VeilEasing),
+                          placementSpec = placementSpec,
+                          fadeOutSpec = tween(180, easing = VeilEasing)
+                        )
+                      )
+                  ) {
+                    InteractiveHomeNoteCard(
+                      note = note,
+                      isSelected = selectedIds.contains(note.id),
+                      isDragging = isDraggingThis,
+                      swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
+                      canStartDrag = canDragThis,
+                      moveTickedToBottom = moveTickedToBottom,
+                      showSelfDestructBadge = proFeatures.selfDestructEnabled,
+                      onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
+                      onClick = {
+                        if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
+                        else onNoteClick(note.id)
+                      },
+                      onSwipeArchive = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.archiveNote(note)
+                        showTransientToast("Archived", archived = listOf(note))
+                      },
+                      onLongPressSelect = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.selectNote(note.id)
+                      },
+                      onLongPressDragStart = { initialOffset ->
+                        viewModel.clearSelection()
+                        livePinnedIds = pinnedNotes.map { it.id }
+                        liveOtherIds = otherNotes.map { it.id }
+                        draggingNoteId = note.id
+                        draggingNoteSnapshot = note
+                        draggingIsPinned = false
+                        dragInitialBoundsInRoot = itemBounds[note.id]
+                        dragTotalDelta = initialOffset
+                        lastSwappedTargetId = null
+                        lastSwapTimeMs = 0L
+                      },
+                      onLongPressDrag = { totalOffset ->
+                        handleLiveReorderSwap(note.id, isPinnedSection = false, totalOffset = totalOffset)
+                      },
+                      onLongPressDragEnd = { commitOrder ->
+                        if (commitOrder) {
+                          viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
+                        }
+                        draggingNoteId = null
+                        draggingNoteSnapshot = null
+                        dragInitialBoundsInRoot = null
+                        dragTotalDelta = Offset.Zero
+                        lastSwappedTargetId = null
+                      }
+                    )
+                  }
                 }
               }
             }
 
-            // PINNED SECTION (supports Swipe-to-Archive + Drag-and-Drop Reorder)
-            if (pinnedNotes.isNotEmpty()) {
-              item(span = StaggeredGridItemSpan.FullLine, key = "header_pinned") {
-                SectionLabel("PINNED")
+            // Floating actively-dragged card overlay: always rendered ABOVE every grid card with zIndex(10f), scale 1.04f, and elevated shadow
+            val activeDragNote = draggingNoteSnapshot
+            val activeDragBounds = dragInitialBoundsInRoot
+            if (draggingNoteId != null && activeDragNote != null && activeDragBounds != null) {
+              var isLifted by remember(draggingNoteId) { mutableStateOf(false) }
+              LaunchedEffect(draggingNoteId) { isLifted = true }
+              val floatingScale by animateFloatAsState(
+                targetValue = if (isLifted && !reduceMotion) 1.04f else 1f,
+                animationSpec = spring(
+                  dampingRatio = Spring.DampingRatioMediumBouncy,
+                  stiffness = Spring.StiffnessMedium
+                ),
+                label = "floating_drag_card_scale"
+              )
+              val cardWidthDp = with(density) { activeDragBounds.width.toDp() }
+              val cardHeightDp = with(density) { activeDragBounds.height.toDp() }
+              val offsetX = (activeDragBounds.left - gridContainerTopLeftInRoot.x) + dragTotalDelta.x
+              val offsetY = (activeDragBounds.top - gridContainerTopLeftInRoot.y) + dragTotalDelta.y
+              val cardShape = RoundedCornerShape(16.dp)
+              val cardBg = colors.noteCardColor(activeDragNote.color)
+              val dragExtras = remember(activeDragNote.checklistJson) {
+                NoteExtrasCodec.decode(activeDragNote.checklistJson)
               }
-              itemsIndexed(
-                items = pinnedNotes,
-                key = { _, note -> "pinned_${note.id}" }
-              ) { index, note ->
-                val isDraggingThis = draggingNoteId == note.id
-                val dragOffsetForCard = if (isDraggingThis) dragOffset else Offset.Zero
-                StaggeredFadeRise(
-                  index = index,
-                  reduceMotion = reduceMotion,
-                  modifier = Modifier
-                    .animateItem()
-                    .zIndex(if (isDraggingThis) 20f else 0f)
-                ) {
-                  InteractiveHomeNoteCard(
-                    note = note,
-                    isSelected = selectedIds.contains(note.id),
-                    isDragging = isDraggingThis,
-                    dragOffset = dragOffsetForCard,
-                    swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
-                    canStartDrag = selectedIds.size <= 1,
-                    moveTickedToBottom = moveTickedToBottom,
-                    showSelfDestructBadge = proFeatures.selfDestructEnabled,
-                    onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
-                    onClick = {
-                      if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
-                      else onNoteClick(note.id)
-                    },
-                    onSwipeArchive = {
-                      haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                      viewModel.archiveNote(note)
-                      showTransientToast("Archived", archived = listOf(note))
-                    },
-                    onLongPressSelect = {
-                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                      longPressStartedSelection = selectedIds.isEmpty()
-                      viewModel.toggleNoteSelection(note.id)
-                    },
-                    onLongPressDragStart = { initialOffset ->
-                      if (longPressStartedSelection) {
-                        viewModel.clearSelection()
-                        longPressStartedSelection = false
-                      }
-                      livePinnedIds = pinnedNotes.map { it.id }
-                      draggingNoteId = note.id
-                      draggingIsPinned = true
-                      dragOffset = initialOffset
-                    },
-                    onLongPressDrag = { delta ->
-                      dragOffset += delta
-                      val originRect = itemBounds[note.id]
-                      if (originRect != null && draggingIsPinned) {
-                        val liveCenter = originRect.center + dragOffset
-                        val targetId = livePinnedIds.firstOrNull { candidateId ->
-                          candidateId != note.id && itemBounds[candidateId]?.contains(liveCenter) == true
-                        }
-                        if (targetId != null) {
-                          val fromIdx = livePinnedIds.indexOf(note.id)
-                          val toIdx = livePinnedIds.indexOf(targetId)
-                          if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
-                            val targetRect = itemBounds[targetId]
-                            livePinnedIds = livePinnedIds.toMutableList().apply {
-                              add(toIdx, removeAt(fromIdx))
-                            }
-                            if (targetRect != null) {
-                              dragOffset -= (targetRect.center - originRect.center)
-                            }
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                          }
-                        }
-                      }
-                    },
-                    onLongPressDragEnd = { commitOrder ->
-                      if (commitOrder) {
-                        viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
-                      }
-                      draggingNoteId = null
-                      dragOffset = Offset.Zero
-                      longPressStartedSelection = false
-                    }
-                  )
-                }
-              }
-            }
 
-            // OTHERS SECTION (supports Swipe-to-Archive + Drag-and-Drop Reorder)
-            if (otherNotes.isNotEmpty()) {
-              if (pinnedNotes.isNotEmpty() || (areHiddenUnlocked && hiddenNotes.isNotEmpty())) {
-                item(span = StaggeredGridItemSpan.FullLine, key = "header_others") {
-                  SectionLabel("OTHERS")
-                }
-              }
-              itemsIndexed(
-                items = otherNotes,
-                key = { _, note -> "other_${note.id}" }
-              ) { index, note ->
-                val isDraggingThis = draggingNoteId == note.id
-                val dragOffsetForCard = if (isDraggingThis) dragOffset else Offset.Zero
-                StaggeredFadeRise(
-                  index = index,
-                  reduceMotion = reduceMotion,
-                  modifier = Modifier
-                    .animateItem()
-                    .zIndex(if (isDraggingThis) 20f else 0f)
-                ) {
-                  InteractiveHomeNoteCard(
-                    note = note,
-                    isSelected = selectedIds.contains(note.id),
-                    isDragging = isDraggingThis,
-                    dragOffset = dragOffsetForCard,
-                    swipeEnabled = draggingNoteId == null && selectedIds.isEmpty(),
-                    canStartDrag = selectedIds.size <= 1,
+              Box(
+                modifier = Modifier
+                  .zIndex(10f)
+                  .graphicsLayer {
+                    translationX = offsetX
+                    translationY = offsetY
+                    scaleX = floatingScale
+                    scaleY = floatingScale
+                  }
+                  .width(cardWidthDp)
+                  .heightIn(min = cardHeightDp)
+                  .shadow(
+                    elevation = 16.dp,
+                    shape = cardShape,
+                    ambientColor = colors.toolbarShadow,
+                    spotColor = colors.toolbarShadow
+                  )
+                  .clip(cardShape)
+                  .background(cardBg)
+                  .border(2.dp, colors.accent, cardShape)
+                  .testTag("floating_dragged_note_card")
+              ) {
+                NoteBackgroundPatternOverlay(
+                  pattern = dragExtras.backgroundPattern,
+                  tint = colors.text,
+                  alphaScale = 0.9f,
+                  modifier = Modifier.matchParentSize()
+                )
+                Box(modifier = Modifier.padding(14.dp)) {
+                  NoteCardContent(
+                    note = activeDragNote,
+                    isHiddenStyle = false,
                     moveTickedToBottom = moveTickedToBottom,
-                    showSelfDestructBadge = proFeatures.selfDestructEnabled,
-                    onBoundsMeasured = { rect -> itemBounds[note.id] = rect },
-                    onClick = {
-                      if (selectedIds.isNotEmpty()) viewModel.toggleNoteSelection(note.id)
-                      else onNoteClick(note.id)
-                    },
-                    onSwipeArchive = {
-                      haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                      viewModel.archiveNote(note)
-                      showTransientToast("Archived", archived = listOf(note))
-                    },
-                    onLongPressSelect = {
-                      haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                      longPressStartedSelection = selectedIds.isEmpty()
-                      viewModel.toggleNoteSelection(note.id)
-                    },
-                    onLongPressDragStart = { initialOffset ->
-                      if (longPressStartedSelection) {
-                        viewModel.clearSelection()
-                        longPressStartedSelection = false
-                      }
-                      liveOtherIds = otherNotes.map { it.id }
-                      draggingNoteId = note.id
-                      draggingIsPinned = false
-                      dragOffset = initialOffset
-                    },
-                    onLongPressDrag = { delta ->
-                      dragOffset += delta
-                      val originRect = itemBounds[note.id]
-                      if (originRect != null && !draggingIsPinned) {
-                        val liveCenter = originRect.center + dragOffset
-                        val targetId = liveOtherIds.firstOrNull { candidateId ->
-                          candidateId != note.id && itemBounds[candidateId]?.contains(liveCenter) == true
-                        }
-                        if (targetId != null) {
-                          val fromIdx = liveOtherIds.indexOf(note.id)
-                          val toIdx = liveOtherIds.indexOf(targetId)
-                          if (fromIdx >= 0 && toIdx >= 0 && fromIdx != toIdx) {
-                            val targetRect = itemBounds[targetId]
-                            liveOtherIds = liveOtherIds.toMutableList().apply {
-                              add(toIdx, removeAt(fromIdx))
-                            }
-                            if (targetRect != null) {
-                              dragOffset -= (targetRect.center - originRect.center)
-                            }
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                          }
-                        }
-                      }
-                    },
-                    onLongPressDragEnd = { commitOrder ->
-                      if (commitOrder) {
-                        viewModel.updateCustomNoteOrder(livePinnedIds + liveOtherIds)
-                      }
-                      draggingNoteId = null
-                      dragOffset = Offset.Zero
-                      longPressStartedSelection = false
-                    }
+                    showSelfDestructBadge = proFeatures.selfDestructEnabled
                   )
                 }
               }
@@ -1236,7 +1441,6 @@ private fun InteractiveHomeNoteCard(
   note: NoteEntity,
   isSelected: Boolean,
   isDragging: Boolean,
-  dragOffset: Offset,
   swipeEnabled: Boolean,
   canStartDrag: Boolean,
   moveTickedToBottom: Boolean,
@@ -1246,7 +1450,7 @@ private fun InteractiveHomeNoteCard(
   onSwipeArchive: () -> Unit,
   onLongPressSelect: () -> Unit,
   onLongPressDragStart: (initialOffset: Offset) -> Unit,
-  onLongPressDrag: (Offset) -> Unit,
+  onLongPressDrag: (totalOffset: Offset) -> Unit,
   onLongPressDragEnd: (commitOrder: Boolean) -> Unit
 ) {
   val colors = VeilThemeTokens.colors
@@ -1268,16 +1472,12 @@ private fun InteractiveHomeNoteCard(
     }
   )
 
+  val latestOnClick by rememberUpdatedState(onClick)
   val latestOnLongPressSelect by rememberUpdatedState(onLongPressSelect)
   val latestOnDragStart by rememberUpdatedState(onLongPressDragStart)
   val latestOnDrag by rememberUpdatedState(onLongPressDrag)
   val latestOnDragEnd by rememberUpdatedState(onLongPressDragEnd)
-
-  val dragScale by animateFloatAsState(
-    targetValue = if (isDragging && !reduceMotion) 1.04f else 1f,
-    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-    label = "drag_lift_scale"
-  )
+  var nodeCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
   val interactionSource = remember { MutableInteractionSource() }
   val isPressed by interactionSource.collectIsPressedAsState()
@@ -1328,72 +1528,104 @@ private fun InteractiveHomeNoteCard(
         modifier = Modifier
           .fillMaxWidth()
           .onGloballyPositioned { coords ->
+            nodeCoords = coords
             if (!isDragging) {
               onBoundsMeasured(coords.boundsInRoot())
             }
           }
           .graphicsLayer {
-            translationX = dragOffset.x
-            translationY = dragOffset.y
-            scaleX = dragScale * pressScale
-            scaleY = dragScale * pressScale
+            scaleX = pressScale
+            scaleY = pressScale
           }
-          .shadow(
-            elevation = if (isDragging) 14.dp else 2.dp,
-            shape = cardShape,
-            ambientColor = colors.shadow,
-            spotColor = colors.shadow
-          )
-          .clip(cardShape)
-          .background(cardBg)
           .then(
-            if (isSelected || isDragging) {
-              Modifier.border(2.dp, colors.accent, cardShape)
+            if (isDragging) {
+              // Subtle drop-target placeholder while the actual card floats cleanly in the zIndex(10f) overlay above
+              Modifier
+                .clip(cardShape)
+                .background(colors.accentSoft.copy(alpha = 0.28f))
+                .border(1.5.dp, colors.accent.copy(alpha = 0.4f), cardShape)
             } else {
               Modifier
+                .shadow(
+                  elevation = 2.dp,
+                  shape = cardShape,
+                  ambientColor = colors.shadow,
+                  spotColor = colors.shadow
+                )
+                .clip(cardShape)
+                .background(cardBg)
+                .then(
+                  if (isSelected) {
+                    Modifier.border(2.dp, colors.accent, cardShape)
+                  } else {
+                    Modifier
+                  }
+                )
+                .indication(interactionSource, ripple())
             }
           )
-          // clickable BEFORE pointerInput so inner pointerInput consumes UP after a 400ms long-press
-          // without firing onClick, while normal taps (<400ms) pass cleanly through to clickable.
-          .clickable(
-            enabled = !isDragging,
-            interactionSource = interactionSource,
-            indication = ripple(),
-            onClick = onClick
-          )
+          .semantics {
+            semanticsOnClick {
+              latestOnClick()
+              true
+            }
+            semanticsOnLongClick {
+              latestOnLongPressSelect()
+              true
+            }
+          }
+          // Unified gesture state machine: cleanly separates Tap, Scroll/Swipe, Stationary Long-Press (Multi-Select), and Long-Press + Drag (Reorder)
           .pointerInput(note.id) {
             val touchSlop = viewConfiguration.touchSlop
-            val reorderThreshold = maxOf(touchSlop * 1.6f, 28.dp.toPx())
+            val longPressMs = viewConfiguration.longPressTimeoutMillis.coerceIn(360L, 450L)
+            val dragStartThreshold = maxOf(touchSlop * 1.25f, 16.dp.toPx())
             awaitEachGesture {
               val down = awaitFirstDown(requireUnconsumed = false)
               val downId = down.id
-              val downPos = down.position
+              val downLocal = down.position
+              val downRoot = nodeCoords?.takeIf { it.isAttached }?.localToRoot(downLocal) ?: downLocal
+              val press = PressInteraction.Press(downLocal)
+              interactionSource.tryEmit(press)
 
-              // Phase 1: Wait ~400ms while stationary for Long-Press
-              var cancelledBeforeLongPress = false
-              val timedOut = withTimeoutOrNull(400L) {
+              // Phase 1: Wait up to ~400ms while stationary to differentiate Short Tap vs Scroll/Swipe vs Long-Press
+              var finishedBeforeLongPress = false
+              val timedOut = withTimeoutOrNull(longPressMs) {
                 while (true) {
                   val event = awaitPointerEvent(PointerEventPass.Main)
                   val change = event.changes.firstOrNull { it.id == downId }
                   if (change == null || !change.pressed || change.changedToUpIgnoreConsumed()) {
-                    cancelledBeforeLongPress = true
+                    finishedBeforeLongPress = true
+                    val upRoot = change?.let {
+                      nodeCoords?.takeIf { c -> c.isAttached }?.localToRoot(it.position)
+                    } ?: downRoot
+                    val movedDist = (upRoot - downRoot).getDistance()
+                    if (change != null && !change.isConsumed && movedDist <= touchSlop) {
+                      interactionSource.tryEmit(PressInteraction.Release(press))
+                      change.consume()
+                      latestOnClick()
+                    } else {
+                      interactionSource.tryEmit(PressInteraction.Cancel(press))
+                    }
                     break
                   }
-                  if (change.isConsumed || (change.position - downPos).getDistance() > touchSlop) {
-                    cancelledBeforeLongPress = true
+                  val curRoot = nodeCoords?.takeIf { it.isAttached }?.localToRoot(change.position) ?: change.position
+                  if (change.isConsumed || (curRoot - downRoot).getDistance() > touchSlop) {
+                    finishedBeforeLongPress = true
+                    interactionSource.tryEmit(PressInteraction.Cancel(press))
                     break
                   }
                 }
               } == null
 
-              if (!timedOut || cancelledBeforeLongPress) {
+              if (!timedOut || finishedBeforeLongPress) {
                 return@awaitEachGesture
               }
 
-              // Phase 2: Stationary 400ms Long-Press confirmed -> haptic + select immediately
+              // Phase 2: Stationary Long-Press confirmed -> release ripple press & enter Multi-Select Mode
+              interactionSource.tryEmit(PressInteraction.Cancel(press))
               latestOnLongPressSelect()
 
-              // Phase 3: Track release (stays selected) vs active drag past threshold (starts reorder)
+              // Phase 3: Lifting without dragging keeps card selected; dragging beyond touch slop cancels multi-select & starts Reorder
               var dragStarted = false
               try {
                 while (true) {
@@ -1403,14 +1635,14 @@ private fun InteractiveHomeNoteCard(
                     change.consume()
                     break
                   }
-                  val delta = change.positionChange()
                   change.consume()
-                  val distFromDown = (change.position - downPos).getDistance()
-                  if (!dragStarted && distFromDown > reorderThreshold && latestCanStartDrag) {
+                  val curRoot = nodeCoords?.takeIf { it.isAttached }?.localToRoot(change.position) ?: continue
+                  val totalOffset = curRoot - downRoot
+                  if (!dragStarted && totalOffset.getDistance() > dragStartThreshold && latestCanStartDrag) {
                     dragStarted = true
-                    latestOnDragStart(change.position - downPos)
-                  } else if (dragStarted && delta != Offset.Zero) {
-                    latestOnDrag(delta)
+                    latestOnDragStart(totalOffset)
+                  } else if (dragStarted) {
+                    latestOnDrag(totalOffset)
                   }
                 }
               } finally {
@@ -1422,19 +1654,25 @@ private fun InteractiveHomeNoteCard(
           }
           .testTag("note_card_${note.id}")
       ) {
-        NoteBackgroundPatternOverlay(
-          pattern = extras.backgroundPattern,
-          tint = colors.text,
-          alphaScale = 0.9f,
-          modifier = Modifier.matchParentSize()
-        )
-        Box(modifier = Modifier.padding(14.dp)) {
-          NoteCardContent(
-            note = note,
-            isHiddenStyle = false,
-            moveTickedToBottom = moveTickedToBottom,
-            showSelfDestructBadge = showSelfDestructBadge
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer { alpha = if (isDragging) 0f else 1f }
+        ) {
+          NoteBackgroundPatternOverlay(
+            pattern = extras.backgroundPattern,
+            tint = colors.text,
+            alphaScale = 0.9f,
+            modifier = Modifier.matchParentSize()
           )
+          Box(modifier = Modifier.padding(14.dp)) {
+            NoteCardContent(
+              note = note,
+              isHiddenStyle = false,
+              moveTickedToBottom = moveTickedToBottom,
+              showSelfDestructBadge = showSelfDestructBadge
+            )
+          }
         }
       }
     }
@@ -1442,13 +1680,13 @@ private fun InteractiveHomeNoteCard(
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
   val colors = VeilThemeTokens.colors
   Text(
     text = text.uppercase(),
     style = VeilTextStyles.sectionLabel,
     color = colors.muted,
-    modifier = Modifier.padding(top = 4.dp, bottom = 0.dp)
+    modifier = modifier.padding(top = 4.dp, bottom = 0.dp)
   )
 }
 

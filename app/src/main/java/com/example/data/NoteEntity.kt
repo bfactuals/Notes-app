@@ -16,6 +16,7 @@ data class NoteEntity(
   val labels: String = "", // comma separated tags
   val checklistJson: String = "", // JSON list of checklist items
   val reminderTime: Long = 0L,
+  val sortOrder: Int = 0,
   val createdAt: Long = System.currentTimeMillis(),
   val updatedAt: Long = System.currentTimeMillis()
 )

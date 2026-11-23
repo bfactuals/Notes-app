@@ -14,10 +14,10 @@ data class AboutConfig(
 ) {
   companion object {
     val DEFAULT_CHANGELOG = listOf(
-      "Restored reliable long-press multi-select & drag-to-reorder on Home",
-      "Added native Android reminders with past-due styling",
-      "Added About & Support hub with remote updates & changelog",
-      "Card-free Material You tonal editor bar & seamless opaque sheets"
+      "Smooth drag-and-drop note reordering persisted across restarts",
+      "Fixed Bold, Highlight, H1 & H2 rich-text formatting in the editor",
+      "Redesigned Pro Features & Welcome Gift experience with Share Veil",
+      "Compact Settings, shorter 3-dot editor menu, and crisper haptic feedback"
     )
   }
 }
@@ -246,7 +246,7 @@ object RemoteConfigParser {
       // 2. Social links (each standard link supports either plain URL string or { enabled, url } object)
       val socialObj = root.optJSONObject("socialLinks")
       val customLinks = mutableListOf<CustomLinkItem>()
-      val customArr = socialObj?.optJSONArray("customLinks")
+      val customArr = root.optJSONArray("customLinks") ?: socialObj?.optJSONArray("customLinks")
       if (customArr != null) {
         for (i in 0 until minOf(customArr.length(), 20)) {
           val itemObj = customArr.optJSONObject(i) ?: continue

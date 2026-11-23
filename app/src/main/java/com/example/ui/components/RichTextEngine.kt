@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.ParagraphStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextRange
@@ -71,6 +72,7 @@ fun buildWysiwygAnnotatedString(
   highlightBg: Color,
   mutedColor: Color,
   accentColor: Color,
+  fontScale: Float = 1f,
   findQuery: String = "",
   activeMatchIndex: Int = -1,
   clickableLinks: Boolean = false,
@@ -79,7 +81,7 @@ fun buildWysiwygAnnotatedString(
   append(text)
   val len = text.length
 
-  // Apply line-level headings (H1 = 23sp Bold, H2 = 19sp SemiBold)
+  // Apply line-level headings scaled to typography preference (H1 = 24sp Bold+, H2 = 20sp Bold)
   if (lineHeadings.isNotEmpty() && len > 0) {
     var lineIdx = 0
     var lineStart = 0
@@ -88,10 +90,28 @@ fun buildWysiwygAnnotatedString(
       val lineEnd = (lineStart + line.length).coerceAtMost(len)
       when (lineHeadings[lineIdx]) {
         1 -> if (lineEnd > lineStart) {
-          addStyle(SpanStyle(fontSize = 23.sp, fontWeight = FontWeight.Bold), lineStart, lineEnd)
+          addStyle(
+            ParagraphStyle(lineHeight = (33f * fontScale).sp),
+            lineStart,
+            lineEnd
+          )
+          addStyle(
+            SpanStyle(fontSize = (24f * fontScale).sp, fontWeight = FontWeight.ExtraBold),
+            lineStart,
+            lineEnd
+          )
         }
         2 -> if (lineEnd > lineStart) {
-          addStyle(SpanStyle(fontSize = 19.sp, fontWeight = FontWeight.SemiBold), lineStart, lineEnd)
+          addStyle(
+            ParagraphStyle(lineHeight = (28f * fontScale).sp),
+            lineStart,
+            lineEnd
+          )
+          addStyle(
+            SpanStyle(fontSize = (20f * fontScale).sp, fontWeight = FontWeight.Bold),
+            lineStart,
+            lineEnd
+          )
         }
       }
       lineStart = lineEnd + 1
@@ -100,7 +120,6 @@ fun buildWysiwygAnnotatedString(
   }
 
   // Apply inline character spans (Bold, Italic, Underline, Strikethrough, Highlight)
-  // Group underline + strikethrough so combined decorations render both cleanly
   for (sp in spans) {
     val s = sp.start.coerceIn(0, len)
     val e = sp.end.coerceIn(0, len)
@@ -156,14 +175,15 @@ fun buildWysiwygAnnotatedString(
   }
 }
 
-class WysiwygVisualTransformation(
-  private val spans: List<RichSpanData>,
-  private val lineHeadings: Map<Int, Int>,
-  private val highlightBg: Color,
-  private val mutedColor: Color,
-  private val accentColor: Color,
-  private val findQuery: String = "",
-  private val activeMatchIndex: Int = -1
+data class WysiwygVisualTransformation(
+  val spans: List<RichSpanData>,
+  val lineHeadings: Map<Int, Int>,
+  val highlightBg: Color,
+  val mutedColor: Color,
+  val accentColor: Color,
+  val fontScale: Float = 1f,
+  val findQuery: String = "",
+  val activeMatchIndex: Int = -1
 ) : VisualTransformation {
   override fun filter(text: AnnotatedString): TransformedText {
     val styled = buildWysiwygAnnotatedString(
@@ -173,6 +193,7 @@ class WysiwygVisualTransformation(
       highlightBg = highlightBg,
       mutedColor = mutedColor,
       accentColor = accentColor,
+      fontScale = fontScale,
       findQuery = findQuery,
       activeMatchIndex = activeMatchIndex,
       clickableLinks = false
@@ -367,7 +388,8 @@ fun stylesActiveAtCursor(spans: List<RichSpanData>, selection: TextRange, textLe
 
 fun lineIndicesForSelection(text: String, selection: TextRange): IntRange {
   val s = selection.min.coerceIn(0, text.length)
-  val e = selection.max.coerceIn(0, text.length)
+  val rawE = selection.max.coerceIn(0, text.length)
+  val e = if (rawE > s && text[rawE - 1] == '\n') rawE - 1 else rawE
   val firstLine = text.substring(0, s).count { it == '\n' }
   val lastLine = text.substring(0, e).count { it == '\n' }
   return firstLine..lastLine

@@ -79,6 +79,7 @@ class VeilPreferences(private val context: Context) {
     val DISMISSED_ANNOUNCEMENT_HASH = stringPreferencesKey("dismissed_announcement_hash")
     val TOTAL_NOTES_CREATED = intPreferencesKey("total_notes_created")
     val STAR_NUDGE_DISMISSED = booleanPreferencesKey("star_nudge_dismissed")
+    val GIFT_PRO_MILESTONE_DISMISSED = booleanPreferencesKey("gift_pro_milestone_dismissed")
   }
 
   val themeMode: Flow<String> = context.dataStore.data.map { prefs ->
@@ -169,6 +170,10 @@ class VeilPreferences(private val context: Context) {
 
   val starNudgeDismissed: Flow<Boolean> = context.dataStore.data.map { prefs ->
     prefs[STAR_NUDGE_DISMISSED] ?: false
+  }
+
+  val giftProMilestoneDismissed: Flow<Boolean> = context.dataStore.data.map { prefs ->
+    prefs[GIFT_PRO_MILESTONE_DISMISSED] ?: false
   }
 
   suspend fun setThemeMode(mode: String) {
@@ -389,6 +394,10 @@ class VeilPreferences(private val context: Context) {
 
   suspend fun dismissStarNudge() {
     context.dataStore.edit { it[STAR_NUDGE_DISMISSED] = true }
+  }
+
+  suspend fun dismissGiftProMilestone() {
+    context.dataStore.edit { it[GIFT_PRO_MILESTONE_DISMISSED] = true }
   }
 
   private fun pbkdf2Hash(password: String, salt: ByteArray): String {

@@ -19,6 +19,10 @@ class NoteRepository(private val noteDao: NoteDao) {
 
   suspend fun updateNote(note: NoteEntity) = noteDao.updateNote(note)
 
+  suspend fun getMinSortOrder(): Int = noteDao.getMinSortOrder() ?: 0
+
+  suspend fun updateNotePositions(orderedIds: List<Long>) = noteDao.updateNotePositions(orderedIds)
+
   suspend fun deleteNoteById(id: Long) = noteDao.deleteNoteById(id)
 
   suspend fun emptyTrash() = noteDao.emptyTrash()

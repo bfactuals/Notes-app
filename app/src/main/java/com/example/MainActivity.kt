@@ -198,6 +198,10 @@ class MainActivity : ComponentActivity() {
                     viewModel.clearSelection()
                     navController.navigate("settings")
                   },
+                  onOpenAboutSupport = {
+                    viewModel.clearSelection()
+                    navController.navigate("about_support")
+                  },
                   onOpenArchive = {
                     viewModel.clearSelection()
                     navController.navigate("archive")
@@ -236,8 +240,7 @@ class MainActivity : ComponentActivity() {
                 SettingsScreen(
                   viewModel = viewModel,
                   onBack = { navController.popBackStack() },
-                  onOpenProFeatures = { navController.navigate("pro_features") },
-                  onOpenAboutSupport = { navController.navigate("about_support") }
+                  onOpenProFeatures = { navController.navigate("pro_features") }
                 )
               }
 

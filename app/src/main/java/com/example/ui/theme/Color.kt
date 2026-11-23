@@ -31,7 +31,7 @@ val VeilDarkBottomBarShadow = Color(0x66000000)
 val VeilDarkHiddenBorder = Color(0xFF3A3A66)
 val VeilDarkBannerBg = Color(0xFF153B28)
 val VeilDarkBannerText = Color(0xFF8EE6B5)
-val VeilDarkHighlight = Color(0xFF8A7A1F)
+val VeilDarkHighlight = Color(0x99F5C542)
 
 // Expanded Note Card Colors - Light
 val NoteCardYellowLight = Color(0xFFFFF4C2)

@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -136,6 +137,7 @@ fun NoteEditorScreen(
   val context = LocalContext.current
   val haptic = LocalHapticFeedback.current
   val focusManager = LocalFocusManager.current
+  val keyboardController = LocalSoftwareKeyboardController.current
   val uriHandler = LocalUriHandler.current
   val scope = rememberCoroutineScope()
   val snackbarHostState = remember { SnackbarHostState() }
@@ -152,6 +154,8 @@ fun NoteEditorScreen(
   var richSpans by remember { mutableStateOf<List<RichSpanData>>(emptyList()) }
   var lineHeadings by remember { mutableStateOf<Map<Int, Int>>(emptyMap()) }
   var pendingInlineStyles by remember { mutableStateOf<Set<String>>(emptySet()) }
+  var lastNonEmptySelection by remember { mutableStateOf(TextRange.Zero) }
+  var lastNonEmptySelectionMs by remember { mutableLongStateOf(0L) }
   var isBodyFocused by remember { mutableStateOf(false) }
 
   // Pro Features per-note state: Self-Destruct timer, Copyable Code Blocks, Local Version History
@@ -325,10 +329,36 @@ fun NoteEditorScreen(
       richSpans = nextSpans
       lineHeadings = nextHeadings
       contentField = newValue
+      lastNonEmptySelection = TextRange.Zero
       textRedoStack = emptyList()
     } else {
       contentField = newValue
+      if (!newValue.selection.collapsed) {
+        lastNonEmptySelection = newValue.selection
+        lastNonEmptySelectionMs = System.currentTimeMillis()
+      }
       pendingInlineStyles = stylesActiveAtCursor(richSpans, newValue.selection, newText.length)
+    }
+  }
+
+  fun dismissKeyboardAndSelection() {
+    if (!contentField.selection.collapsed) {
+      contentField = contentField.copy(selection = TextRange(contentField.selection.end))
+    }
+    lastNonEmptySelection = TextRange.Zero
+    focusManager.clearFocus(force = true)
+    keyboardController?.hide()
+  }
+
+  fun resolveEffectiveSelection(): TextRange {
+    val cur = contentField.selection
+    if (!cur.collapsed) return cur
+    val recent = lastNonEmptySelection
+    val withinWindow = (System.currentTimeMillis() - lastNonEmptySelectionMs) < 900L
+    return if (!recent.collapsed && withinWindow && recent.max <= contentField.text.length) {
+      recent
+    } else {
+      cur
     }
   }
 
@@ -367,27 +397,32 @@ fun NoteEditorScreen(
   }
 
   fun applyHeadingLevel(level: Int) {
+    val targetSel = resolveEffectiveSelection()
+    val lines = lineIndicesForSelection(contentField.text, targetSel)
+    val currentAllMatch = level != 0 && lines.all { (lineHeadings[it] ?: 0) == level }
+    val resolvedLevel = if (currentAllMatch) 0 else level
     pushTextUndoSnapshot(force = true)
     lineHeadings = applyHeadingToSelection(
       text = contentField.text,
-      selection = contentField.selection,
+      selection = targetSel,
       currentHeadings = lineHeadings,
-      level = level
+      level = resolvedLevel
     )
     textRedoStack = emptyList()
   }
 
   fun toggleInlineRichStyle(style: String) {
-    if (!contentField.selection.collapsed) {
+    val targetSel = resolveEffectiveSelection()
+    if (!targetSel.collapsed) {
       pushTextUndoSnapshot(force = true)
       val nextSpans = toggleStyleOverRange(
         spans = richSpans,
-        range = contentField.selection,
+        range = targetSel,
         style = style,
         textLength = contentField.text.length
       )
       richSpans = nextSpans
-      pendingInlineStyles = stylesActiveAtCursor(nextSpans, contentField.selection, contentField.text.length)
+      pendingInlineStyles = stylesActiveAtCursor(nextSpans, targetSel, contentField.text.length)
       textRedoStack = emptyList()
     } else {
       pendingInlineStyles = if (style in pendingInlineStyles) {
@@ -796,8 +831,9 @@ fun NoteEditorScreen(
   val screenBg = if (color == "plain" || color == "white") colors.bg else colors.noteCardColor(color)
   val tonalSurfaceColor = colors.noteTonalColor(color)
   val sheetSurfaceColor = colors.noteSheetColor(color)
+  val fontScale = VeilThemeTokens.typographyPrefs.scale
   val wysiwygTransformation = remember(
-    richSpans, lineHeadings, colors.highlight, colors.muted, colors.accent, findQuery, activeFindIndex, showFindBar
+    richSpans, lineHeadings, colors.highlight, colors.muted, colors.accent, fontScale, findQuery, activeFindIndex, showFindBar
   ) {
     WysiwygVisualTransformation(
       spans = richSpans,
@@ -805,13 +841,14 @@ fun NoteEditorScreen(
       highlightBg = colors.highlight,
       mutedColor = colors.muted,
       accentColor = colors.accent,
+      fontScale = fontScale,
       findQuery = if (showFindBar) findQuery else "",
       activeMatchIndex = if (showFindBar && findMatches.isNotEmpty()) activeFindIndex else -1
     )
   }
 
   val readModeAnnotatedBody = remember(
-    contentField.text, richSpans, lineHeadings, colors.highlight, colors.muted, colors.accent, findQuery, activeFindIndex, showFindBar, isReadOnlyMode
+    contentField.text, richSpans, lineHeadings, colors.highlight, colors.muted, colors.accent, fontScale, findQuery, activeFindIndex, showFindBar, isReadOnlyMode
   ) {
     if (isReadOnlyMode) {
       buildWysiwygAnnotatedString(
@@ -821,6 +858,7 @@ fun NoteEditorScreen(
         highlightBg = colors.highlight,
         mutedColor = colors.muted,
         accentColor = colors.accent,
+        fontScale = fontScale,
         findQuery = if (showFindBar) findQuery else "",
         activeMatchIndex = if (showFindBar && findMatches.isNotEmpty()) activeFindIndex else -1,
         clickableLinks = true,
@@ -1503,10 +1541,12 @@ fun NoteEditorScreen(
               // "+" Insert Tools Seamless Docked Sheet
               AnimatedVisibility(
                 visible = activePanel == ActiveEditorPanel.INSERT && !isReadOnlyMode,
-                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
-                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-                ),
-                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+                enter = fadeIn(tween(if (reduceMotion) 0 else 180)) +
+                  expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                  slideInVertically(tween(if (reduceMotion) 0 else 180)) { it / 6 },
+                exit = fadeOut(tween(if (reduceMotion) 0 else 130)) +
+                  shrinkVertically(tween(if (reduceMotion) 0 else 160)) +
+                  slideOutVertically(tween(if (reduceMotion) 0 else 130)) { it / 6 }
               ) {
                 InsertToolsPanel(
                   sheetBg = sheetSurfaceColor,
@@ -1554,10 +1594,12 @@ fun NoteEditorScreen(
               // Self-Destruct Quick-Select Docked Sheet (Off / 1h / 24h / 7d)
               AnimatedVisibility(
                 visible = activePanel == ActiveEditorPanel.TIMER && proFeatures.selfDestructEnabled,
-                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
-                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-                ),
-                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+                enter = fadeIn(tween(if (reduceMotion) 0 else 180)) +
+                  expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                  slideInVertically(tween(if (reduceMotion) 0 else 180)) { it / 6 },
+                exit = fadeOut(tween(if (reduceMotion) 0 else 130)) +
+                  shrinkVertically(tween(if (reduceMotion) 0 else 160)) +
+                  slideOutVertically(tween(if (reduceMotion) 0 else 130)) { it / 6 }
               ) {
                 SelfDestructQuickPopup(
                   currentExpiresAt = expiresAt,
@@ -1574,10 +1616,12 @@ fun NoteEditorScreen(
               // Seamless Opaque Docked Bottom Sheet for Color & Background Pattern Picker (zero bleed-through)
               AnimatedVisibility(
                 visible = activePanel == ActiveEditorPanel.PALETTE,
-                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
-                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-                ),
-                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+                enter = fadeIn(tween(if (reduceMotion) 0 else 180)) +
+                  expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                  slideInVertically(tween(if (reduceMotion) 0 else 180)) { it / 6 },
+                exit = fadeOut(tween(if (reduceMotion) 0 else 130)) +
+                  shrinkVertically(tween(if (reduceMotion) 0 else 160)) +
+                  slideOutVertically(tween(if (reduceMotion) 0 else 130)) { it / 6 }
               ) {
                 val sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                 Box(
@@ -1600,13 +1644,16 @@ fun NoteEditorScreen(
               // Three-Dot Overflow Seamless Docked Sheet
               AnimatedVisibility(
                 visible = activePanel == ActiveEditorPanel.OVERFLOW,
-                enter = fadeIn(tween(if (reduceMotion) 0 else 160)) + expandVertically(
-                  spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)
-                ),
-                exit = fadeOut(tween(if (reduceMotion) 0 else 120)) + shrinkVertically()
+                enter = fadeIn(tween(if (reduceMotion) 0 else 180)) +
+                  expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMedium)) +
+                  slideInVertically(tween(if (reduceMotion) 0 else 180)) { it / 6 },
+                exit = fadeOut(tween(if (reduceMotion) 0 else 130)) +
+                  shrinkVertically(tween(if (reduceMotion) 0 else 160)) +
+                  slideOutVertically(tween(if (reduceMotion) 0 else 130)) { it / 6 }
               ) {
                 NoteOverflowMenuPanel(
                   sheetBg = sheetSurfaceColor,
+                  tonalColor = tonalSurfaceColor,
                   isReadOnlyMode = isReadOnlyMode,
                   hasReminder = reminderTime > 0L,
                   hasLabels = assignedLabels.isNotEmpty(),
@@ -1716,20 +1763,28 @@ fun NoteEditorScreen(
                 isTimerOpen = activePanel == ActiveEditorPanel.TIMER,
                 hasActiveTimer = expiresAt > nowTick,
                 onToggleInsert = {
-                  activePanel = if (activePanel == ActiveEditorPanel.INSERT) ActiveEditorPanel.NONE else ActiveEditorPanel.INSERT
+                  val opening = activePanel != ActiveEditorPanel.INSERT
+                  if (opening) dismissKeyboardAndSelection()
+                  activePanel = if (opening) ActiveEditorPanel.INSERT else ActiveEditorPanel.NONE
                 },
                 onToggleTimer = {
-                  activePanel = if (activePanel == ActiveEditorPanel.TIMER) ActiveEditorPanel.NONE else ActiveEditorPanel.TIMER
+                  val opening = activePanel != ActiveEditorPanel.TIMER
+                  if (opening) dismissKeyboardAndSelection()
+                  activePanel = if (opening) ActiveEditorPanel.TIMER else ActiveEditorPanel.NONE
                 },
                 onTogglePalette = {
-                  activePanel = if (activePanel == ActiveEditorPanel.PALETTE) ActiveEditorPanel.NONE else ActiveEditorPanel.PALETTE
+                  val opening = activePanel != ActiveEditorPanel.PALETTE
+                  if (opening) dismissKeyboardAndSelection()
+                  activePanel = if (opening) ActiveEditorPanel.PALETTE else ActiveEditorPanel.NONE
                 },
                 onToggleFormatBar = {
                   activePanel = ActiveEditorPanel.NONE
                   showFormatBar = !showFormatBar
                 },
                 onToggleOverflow = {
-                  activePanel = if (activePanel == ActiveEditorPanel.OVERFLOW) ActiveEditorPanel.NONE else ActiveEditorPanel.OVERFLOW
+                  val opening = activePanel != ActiveEditorPanel.OVERFLOW
+                  if (opening) dismissKeyboardAndSelection()
+                  activePanel = if (opening) ActiveEditorPanel.OVERFLOW else ActiveEditorPanel.NONE
                 }
               )
             }

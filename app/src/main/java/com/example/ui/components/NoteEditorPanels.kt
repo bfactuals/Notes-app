@@ -441,6 +441,7 @@ fun InsertToolsPanel(
 @Composable
 fun NoteOverflowMenuPanel(
   sheetBg: Color,
+  tonalColor: Color = VeilThemeTokens.colors.bg,
   isReadOnlyMode: Boolean,
   hasReminder: Boolean,
   hasLabels: Boolean,
@@ -468,13 +469,67 @@ fun NoteOverflowMenuPanel(
       .clip(shape)
       .background(sheetBg)
       .pointerInput(Unit) { detectTapGestures { } }
-      .padding(top = 10.dp, bottom = 6.dp, start = 10.dp, end = 10.dp)
+      .padding(top = 12.dp, bottom = 6.dp, start = 12.dp, end = 12.dp)
       .testTag("editor_overflow_panel")
   ) {
+    // Compact horizontal quick-action icon row at the top (Copy, Share, Archive, Delete)
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(bottom = 8.dp),
+      horizontalArrangement = Arrangement.spacedBy(8.dp),
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      OverflowQuickActionTile(
+        label = "Copy",
+        tonalColor = tonalColor,
+        tint = colors.text,
+        icon = { VeilIcons.CopyOutline(tint = colors.text, size = 19.dp) },
+        onClick = onCopyAllText,
+        tag = "overflow_copy_text",
+        modifier = Modifier.weight(1f)
+      )
+      if (enableSharing) {
+        OverflowQuickActionTile(
+          label = "Share",
+          tonalColor = tonalColor,
+          tint = colors.text,
+          icon = { VeilIcons.ShareOutline(tint = colors.text, size = 19.dp) },
+          onClick = onSendShare,
+          tag = "overflow_share",
+          modifier = Modifier.weight(1f)
+        )
+      }
+      OverflowQuickActionTile(
+        label = "Archive",
+        tonalColor = tonalColor,
+        tint = colors.text,
+        icon = { VeilIcons.Archive(tint = colors.text, size = 19.dp) },
+        onClick = onArchive,
+        tag = "overflow_archive",
+        modifier = Modifier.weight(1f)
+      )
+      OverflowQuickActionTile(
+        label = "Delete",
+        tonalColor = tonalColor,
+        tint = colors.doodlePink,
+        icon = { VeilIcons.Trash(tint = colors.doodlePink, size = 19.dp) },
+        onClick = onDelete,
+        tag = "overflow_delete",
+        modifier = Modifier.weight(1f)
+      )
+    }
+
+    HorizontalDivider(
+      modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+      color = colors.muted.copy(alpha = 0.2f),
+      thickness = 1.dp
+    )
+
     PanelActionRow(
       label = if (isReadOnlyMode) "Read mode (On)" else "Read mode",
       labelColor = if (isReadOnlyMode) colors.accent else null,
-      icon = { VeilIcons.ReadBookOutline(tint = if (isReadOnlyMode) colors.accent else colors.text, size = 21.dp) },
+      icon = { VeilIcons.ReadBookOutline(tint = if (isReadOnlyMode) colors.accent else colors.text, size = 20.dp) },
       trailing = {
         if (isReadOnlyMode) {
           VeilIcons.CheckOutline(tint = colors.accent, size = 18.dp)
@@ -486,7 +541,7 @@ fun NoteOverflowMenuPanel(
     if (showVersionHistory) {
       PanelActionRow(
         label = "Version history",
-        icon = { VeilIcons.HistoryOutline(tint = colors.text, size = 21.dp) },
+        icon = { VeilIcons.HistoryOutline(tint = colors.text, size = 20.dp) },
         trailing = {
           if (versionCount > 0) {
             Text(
@@ -502,59 +557,57 @@ fun NoteOverflowMenuPanel(
     }
     PanelActionRow(
       label = "Reminder",
-      icon = { VeilIcons.Bell(tint = if (hasReminder) colors.accent else colors.text, size = 21.dp) },
+      icon = { VeilIcons.Bell(tint = if (hasReminder) colors.accent else colors.text, size = 20.dp) },
       onClick = onReminder,
       tag = "overflow_reminder"
     )
     PanelActionRow(
       label = "Labels",
-      icon = { VeilIcons.Tag(tint = if (hasLabels) colors.accent else colors.text, size = 21.dp) },
+      icon = { VeilIcons.Tag(tint = if (hasLabels) colors.accent else colors.text, size = 20.dp) },
       onClick = onLabels,
       tag = "overflow_labels"
     )
     PanelActionRow(
       label = "Find in note",
-      icon = { VeilIcons.Search(tint = colors.text, size = 20.dp) },
+      icon = { VeilIcons.Search(tint = colors.text, size = 19.dp) },
       onClick = onFindInNote,
       tag = "overflow_find"
     )
     PanelActionRow(
       label = "Make a copy",
-      icon = { VeilIcons.CopyOutline(tint = colors.text, size = 21.dp) },
+      icon = { VeilIcons.NoteDoc(tint = colors.text, size = 20.dp) },
       onClick = onMakeCopy,
       tag = "overflow_copy_note"
     )
-    PanelActionRow(
-      label = "Copy all text",
-      icon = { VeilIcons.NoteDoc(tint = colors.text, size = 21.dp) },
-      onClick = onCopyAllText,
-      tag = "overflow_copy_text"
-    )
-    if (enableSharing) {
-      PanelActionRow(
-        label = "Send / Share",
-        icon = { VeilIcons.ShareOutline(tint = colors.text, size = 21.dp) },
-        onClick = onSendShare,
-        tag = "overflow_share"
-      )
-    }
-    HorizontalDivider(
-      modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-      color = colors.muted.copy(alpha = 0.2f),
-      thickness = 1.dp
-    )
-    PanelActionRow(
-      label = "Archive",
-      icon = { VeilIcons.Archive(tint = colors.text, size = 21.dp) },
-      onClick = onArchive,
-      tag = "overflow_archive"
-    )
-    PanelActionRow(
-      label = "Delete",
-      labelColor = colors.doodlePink,
-      icon = { VeilIcons.Trash(tint = colors.doodlePink, size = 21.dp) },
-      onClick = onDelete,
-      tag = "overflow_delete"
+  }
+}
+
+@Composable
+private fun OverflowQuickActionTile(
+  label: String,
+  tonalColor: Color,
+  tint: Color,
+  icon: @Composable () -> Unit,
+  onClick: () -> Unit,
+  tag: String,
+  modifier: Modifier = Modifier
+) {
+  Column(
+    modifier = modifier
+      .clip(RoundedCornerShape(14.dp))
+      .background(tonalColor)
+      .tactilePress(scaleDown = 0.93f, hapticOnClick = true, role = Role.Button, onClick = onClick)
+      .padding(vertical = 10.dp, horizontal = 6.dp)
+      .testTag(tag),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(5.dp)
+  ) {
+    icon()
+    Text(
+      text = label,
+      style = VeilTextStyles.labelChip.copy(fontSize = 11.5.sp, fontWeight = FontWeight.Medium),
+      color = tint,
+      maxLines = 1
     )
   }
 }

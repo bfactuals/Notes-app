@@ -4,15 +4,16 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NoteDao {
-  @Query("SELECT * FROM notes WHERE isArchived = 0 AND isTrashed = 0 AND isHidden = 0 ORDER BY isPinned DESC, updatedAt DESC")
+  @Query("SELECT * FROM notes WHERE isArchived = 0 AND isTrashed = 0 AND isHidden = 0 ORDER BY isPinned DESC, sortOrder ASC, updatedAt DESC")
   fun getActiveNotes(): Flow<List<NoteEntity>>
 
-  @Query("SELECT * FROM notes WHERE isHidden = 1 AND isArchived = 0 AND isTrashed = 0 ORDER BY updatedAt DESC")
+  @Query("SELECT * FROM notes WHERE isHidden = 1 AND isArchived = 0 AND isTrashed = 0 ORDER BY sortOrder ASC, updatedAt DESC")
   fun getHiddenNotes(): Flow<List<NoteEntity>>
 
   @Query("SELECT * FROM notes WHERE isArchived = 1 AND isTrashed = 0 AND isHidden = 0 ORDER BY updatedAt DESC")
@@ -29,6 +30,19 @@ interface NoteDao {
 
   @Query("SELECT * FROM notes WHERE id = :noteId")
   suspend fun getNoteById(noteId: Long): NoteEntity?
+
+  @Query("SELECT MIN(sortOrder) FROM notes")
+  suspend fun getMinSortOrder(): Int?
+
+  @Query("UPDATE notes SET sortOrder = :sortOrder WHERE id = :noteId")
+  suspend fun updateNoteSortOrder(noteId: Long, sortOrder: Int)
+
+  @Transaction
+  suspend fun updateNotePositions(orderedIds: List<Long>) {
+    orderedIds.forEachIndexed { index, id ->
+      updateNoteSortOrder(noteId = id, sortOrder = index)
+    }
+  }
 
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertNote(note: NoteEntity): Long

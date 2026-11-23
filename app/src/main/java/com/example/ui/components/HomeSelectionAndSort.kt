@@ -114,19 +114,21 @@ fun SortOrderMenuButton(
 
 /**
  * Upgraded animated Home Screen Top Selection Bar:
- * Close + Count | Pin, Reminder, Color Picker, Label, and Three-Dot Menu
- * (Archive, Delete, Make a Copy, Copy All Text to Clipboard, Send / Share).
+ * Close + Count | Pin, Color, Archive, Delete, Select All, and Three-Dot Menu
+ * (Reminder, Labels, Make a Copy, Copy All Text to Clipboard, Send / Share).
  */
 @Composable
 fun HomeSelectionTopBar(
   selectedCount: Int,
   allPinned: Boolean,
+  allSelected: Boolean,
   enableSharing: Boolean,
   onClearSelection: () -> Unit,
   onTogglePin: () -> Unit,
   onOpenReminder: () -> Unit,
   onOpenColorPicker: () -> Unit,
   onOpenLabelManager: () -> Unit,
+  onSelectAll: () -> Unit,
   onArchive: () -> Unit,
   onDelete: () -> Unit,
   onMakeCopy: () -> Unit,
@@ -156,7 +158,7 @@ fun HomeSelectionTopBar(
   ) {
     Box(
       modifier = Modifier
-        .size(40.dp)
+        .size(38.dp)
         .clip(CircleShape)
         .tactilePress(scaleDown = 0.88f, hapticOnClick = true, onClick = onClearSelection)
         .semantics { contentDescription = "Clear selection" }
@@ -170,7 +172,7 @@ fun HomeSelectionTopBar(
       text = "$selectedCount",
       style = VeilTextStyles.cardTitle.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
       color = colors.accent,
-      modifier = Modifier.padding(start = 2.dp, end = 6.dp)
+      modifier = Modifier.padding(start = 2.dp, end = 4.dp)
     )
 
     Spacer(modifier = Modifier.weight(1f))
@@ -180,15 +182,7 @@ fun HomeSelectionTopBar(
       tag = "selection_pin_button",
       onClick = onTogglePin
     ) {
-      VeilIcons.Pin(tint = colors.accent, size = 20.dp)
-    }
-
-    SelectionBarIconButton(
-      description = "Set reminder for selected",
-      tag = "selection_reminder_button",
-      onClick = onOpenReminder
-    ) {
-      VeilIcons.Bell(tint = colors.accent, size = 20.dp)
+      VeilIcons.Pin(tint = colors.accent, size = 19.dp)
     }
 
     SelectionBarIconButton(
@@ -196,15 +190,31 @@ fun HomeSelectionTopBar(
       tag = "selection_color_button",
       onClick = onOpenColorPicker
     ) {
-      VeilIcons.PaletteOutline(tint = colors.accent, size = 20.dp)
+      VeilIcons.PaletteOutline(tint = colors.accent, size = 19.dp)
     }
 
     SelectionBarIconButton(
-      description = "Manage labels for selected",
-      tag = "selection_label_button",
-      onClick = onOpenLabelManager
+      description = "Archive selected",
+      tag = "selection_archive_button",
+      onClick = onArchive
     ) {
-      VeilIcons.Tag(tint = colors.accent, size = 20.dp)
+      VeilIcons.Archive(tint = colors.accent, size = 19.dp)
+    }
+
+    SelectionBarIconButton(
+      description = "Delete selected",
+      tag = "selection_delete_button",
+      onClick = onDelete
+    ) {
+      VeilIcons.Trash(tint = colors.doodlePink, size = 19.dp)
+    }
+
+    SelectionBarIconButton(
+      description = if (allSelected) "Deselect all" else "Select all notes",
+      tag = "selection_select_all_button",
+      onClick = onSelectAll
+    ) {
+      VeilIcons.SelectAllOutline(tint = colors.accent, size = 19.dp)
     }
 
     Box {
@@ -213,7 +223,7 @@ fun HomeSelectionTopBar(
         tag = "selection_more_button",
         onClick = { menuExpanded = true }
       ) {
-        VeilIcons.MoreVert(tint = colors.accent, size = 20.dp)
+        VeilIcons.MoreVert(tint = colors.accent, size = 19.dp)
       }
 
       DropdownMenu(
@@ -223,22 +233,22 @@ fun HomeSelectionTopBar(
         shape = RoundedCornerShape(18.dp)
       ) {
         DropdownMenuItem(
-          text = { Text("Archive", style = VeilTextStyles.cardBody, color = colors.text) },
-          leadingIcon = { VeilIcons.Archive(tint = colors.text, size = 19.dp) },
+          text = { Text("Reminder", style = VeilTextStyles.cardBody, color = colors.text) },
+          leadingIcon = { VeilIcons.Bell(tint = colors.text, size = 19.dp) },
           onClick = {
             menuExpanded = false
-            onArchive()
+            onOpenReminder()
           },
-          modifier = Modifier.testTag("selection_menu_archive")
+          modifier = Modifier.testTag("selection_menu_reminder")
         )
         DropdownMenuItem(
-          text = { Text("Delete", style = VeilTextStyles.cardBody, color = colors.doodlePink) },
-          leadingIcon = { VeilIcons.Trash(tint = colors.doodlePink, size = 19.dp) },
+          text = { Text("Labels", style = VeilTextStyles.cardBody, color = colors.text) },
+          leadingIcon = { VeilIcons.Tag(tint = colors.text, size = 19.dp) },
           onClick = {
             menuExpanded = false
-            onDelete()
+            onOpenLabelManager()
           },
-          modifier = Modifier.testTag("selection_menu_delete")
+          modifier = Modifier.testTag("selection_menu_labels")
         )
         HorizontalDivider(color = colors.accentSoft, thickness = 1.dp)
         DropdownMenuItem(
@@ -284,7 +294,7 @@ private fun SelectionBarIconButton(
 ) {
   Box(
     modifier = Modifier
-      .size(40.dp)
+      .size(38.dp)
       .clip(CircleShape)
       .tactilePress(scaleDown = 0.86f, hapticOnClick = true, onClick = onClick)
       .semantics { contentDescription = description }

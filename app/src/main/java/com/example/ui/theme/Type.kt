@@ -9,10 +9,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 
 val InterFontFamily = FontFamily(
-  Font(R.font.inter, FontWeight.Normal),
-  Font(R.font.inter, FontWeight.Medium),
-  Font(R.font.inter, FontWeight.SemiBold),
-  Font(R.font.inter, FontWeight.Bold)
+  Font(R.font.inter, FontWeight.Normal)
 )
 
 object VeilTextStyles {

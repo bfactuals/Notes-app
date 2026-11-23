@@ -4,10 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -82,10 +87,16 @@ fun HomeAnnouncementBanner(
   val colors = VeilThemeTokens.colors
   val hasValidLink = RemoteConfigValidator.isValidHttpsUrl(announcement.link)
 
+  val reduceMotion = VeilThemeTokens.reduceMotion
+
   AnimatedVisibility(
     visible = visible && announcement.isDisplayable,
-    enter = fadeIn() + expandVertically(),
-    exit = fadeOut() + shrinkVertically(),
+    enter = fadeIn(tween(if (reduceMotion) 0 else 220)) +
+      expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)) +
+      slideInVertically(tween(if (reduceMotion) 0 else 220)) { -it / 5 },
+    exit = fadeOut(tween(if (reduceMotion) 0 else 160)) +
+      shrinkVertically(tween(if (reduceMotion) 0 else 180)) +
+      slideOutVertically(tween(if (reduceMotion) 0 else 160)) { -it / 5 },
     modifier = modifier
   ) {
     val shape = RoundedCornerShape(16.dp)
@@ -185,10 +196,16 @@ fun GitHubStarNudgeCard(
   val colors = VeilThemeTokens.colors
   val haptic = LocalHapticFeedback.current
 
+  val reduceMotion = VeilThemeTokens.reduceMotion
+
   AnimatedVisibility(
     visible = visible,
-    enter = fadeIn() + expandVertically(),
-    exit = fadeOut() + shrinkVertically(),
+    enter = fadeIn(tween(if (reduceMotion) 0 else 220)) +
+      expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)) +
+      slideInVertically(tween(if (reduceMotion) 0 else 220)) { -it / 5 },
+    exit = fadeOut(tween(if (reduceMotion) 0 else 160)) +
+      shrinkVertically(tween(if (reduceMotion) 0 else 180)) +
+      slideOutVertically(tween(if (reduceMotion) 0 else 160)) { -it / 5 },
     modifier = modifier
   ) {
     val shape = RoundedCornerShape(18.dp)
@@ -254,6 +271,133 @@ fun GitHubStarNudgeCard(
         ) {
           Text(
             text = "Star Now ⭐",
+            style = VeilTextStyles.cardTitle.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+            color = Color.White
+          )
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Clean, dismissible 10-notes milestone card on the Home screen inviting the user
+ * to share Veil ("Gift Free Pro to a friend") via the native Android Share Sheet.
+ */
+@Composable
+fun GiftProMilestoneCard(
+  visible: Boolean,
+  onShareGift: () -> Unit,
+  onDismiss: () -> Unit,
+  modifier: Modifier = Modifier
+) {
+  val colors = VeilThemeTokens.colors
+  val reduceMotion = VeilThemeTokens.reduceMotion
+  val haptic = LocalHapticFeedback.current
+
+  AnimatedVisibility(
+    visible = visible,
+    enter = fadeIn(tween(if (reduceMotion) 0 else 240)) +
+      expandVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)) +
+      slideInVertically(tween(if (reduceMotion) 0 else 240)) { -it / 5 },
+    exit = fadeOut(tween(if (reduceMotion) 0 else 160)) +
+      shrinkVertically(tween(if (reduceMotion) 0 else 180)) +
+      slideOutVertically(tween(if (reduceMotion) 0 else 160)) { -it / 5 },
+    modifier = modifier
+  ) {
+    val shape = RoundedCornerShape(18.dp)
+    val cardBg = if (colors.isDark) {
+      colors.accentSoft.copy(alpha = 0.72f)
+    } else {
+      colors.accentSoft.copy(alpha = 0.86f)
+    }
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp, vertical = 6.dp)
+        .shadow(3.dp, shape, ambientColor = colors.shadow, spotColor = colors.shadow)
+        .clip(shape)
+        .background(cardBg)
+        .border(1.dp, colors.accent.copy(alpha = if (colors.isDark) 0.48f else 0.35f), shape)
+        .padding(start = 14.dp, end = 10.dp, top = 12.dp, bottom = 13.dp)
+        .testTag("gift_pro_milestone_card"),
+      verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        Box(
+          modifier = Modifier
+            .padding(top = 2.dp)
+            .size(38.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.accent.copy(alpha = 0.2f))
+            .border(1.dp, colors.accent.copy(alpha = 0.38f), RoundedCornerShape(12.dp)),
+          contentAlignment = Alignment.Center
+        ) {
+          VeilIcons.CrownOutline(tint = colors.accent, size = 20.dp)
+        }
+
+        Column(
+          modifier = Modifier
+            .weight(1f)
+            .padding(top = 1.dp),
+          verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+          Text(
+            text = "Loving Veil? Gift Free Pro to a friend",
+            style = VeilTextStyles.cardTitle.copy(fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold),
+            color = colors.text
+          )
+          Text(
+            text = "You've created 10+ notes. Share this free, ad-free app with someone who'd love it.",
+            style = VeilTextStyles.meta.copy(fontSize = 12.5.sp, lineHeight = 17.5.sp),
+            color = colors.muted
+          )
+        }
+
+        Box(
+          modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .clickable(
+              role = Role.Button,
+              onClickLabel = "Dismiss milestone reminder",
+              onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onDismiss()
+              }
+            )
+            .semantics { contentDescription = "Dismiss milestone reminder" }
+            .testTag("gift_pro_milestone_dismiss_button"),
+          contentAlignment = Alignment.Center
+        ) {
+          VeilIcons.Close(tint = colors.muted, size = 16.dp)
+        }
+      }
+
+      Row(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(end = 4.dp),
+        horizontalArrangement = Arrangement.End,
+        verticalAlignment = Alignment.CenterVertically
+      ) {
+        Row(
+          modifier = Modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(colors.accent)
+            .tactilePress(scaleDown = 0.95f, hapticOnClick = true, role = Role.Button, onClick = onShareGift)
+            .padding(horizontal = 16.dp, vertical = 9.dp)
+            .testTag("gift_pro_milestone_share_button"),
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+          VeilIcons.GiftOutline(tint = Color.White, size = 16.dp)
+          Text(
+            text = "Share Gift",
             style = VeilTextStyles.cardTitle.copy(fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
             color = Color.White
           )

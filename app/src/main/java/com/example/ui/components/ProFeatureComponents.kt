@@ -15,6 +15,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -609,8 +611,10 @@ fun SmartCategoryFilterRow(
 }
 
 /**
- * Sleek glassmorphism Welcome Gift modal shown ONCE 60 seconds after first install.
+ * Clean Welcome Gift modal ("Veil Pro, on us") with circular Crown vector icon,
+ * feature pill chips, primary purple "Claim free Pro" button, and "Maybe later" button.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ProGiftModalDialog(
   onClaim: () -> Unit,
@@ -618,6 +622,7 @@ fun ProGiftModalDialog(
 ) {
   val colors = VeilThemeTokens.colors
   val cardShape = RoundedCornerShape(28.dp)
+  val featurePills = listOf("Self-destruct", "Calculator", "History", "Prompt blocks", "+ more")
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -631,26 +636,13 @@ fun ProGiftModalDialog(
       modifier = Modifier
         .fillMaxWidth()
         .padding(horizontal = 24.dp)
-        .widthIn(max = 400.dp)
+        .widthIn(max = 396.dp)
         .shadow(24.dp, cardShape, ambientColor = colors.toolbarShadow, spotColor = colors.toolbarShadow)
         .clip(cardShape)
-        .background(
-          Brush.verticalGradient(
-            colors = listOf(
-              colors.surface.copy(alpha = 0.96f),
-              colors.accentSoft.copy(alpha = if (colors.isDark) 0.85f else 0.72f)
-            )
-          )
-        )
+        .background(colors.surface)
         .border(
-          width = 1.2.dp,
-          brush = Brush.linearGradient(
-            colors = listOf(
-              colors.accent.copy(alpha = 0.65f),
-              colors.hiddenBorder.copy(alpha = 0.45f),
-              colors.accent.copy(alpha = 0.4f)
-            )
-          ),
+          width = 1.dp,
+          color = colors.accent.copy(alpha = if (colors.isDark) 0.42f else 0.28f),
           shape = cardShape
         )
         .padding(horizontal = 24.dp, vertical = 26.dp)
@@ -663,30 +655,59 @@ fun ProGiftModalDialog(
       ) {
         Box(
           modifier = Modifier
-            .size(56.dp)
+            .size(60.dp)
             .clip(CircleShape)
             .background(colors.accent.copy(alpha = 0.16f))
-            .border(1.dp, colors.accent.copy(alpha = 0.4f), CircleShape),
+            .border(1.dp, colors.accent.copy(alpha = 0.45f), CircleShape),
           contentAlignment = Alignment.Center
         ) {
-          VeilIcons.SparklesOutline(tint = colors.accent, size = 28.dp)
+          VeilIcons.CrownOutline(tint = colors.accent, size = 28.dp)
         }
 
-        Text(
-          text = "🎁 Welcome Gift — Pro Unlocked (100% OFF)",
-          style = VeilTextStyles.editorTitle.copy(fontSize = 20.sp, lineHeight = 26.sp),
-          color = colors.text,
-          textAlign = TextAlign.Center
-        )
+        Column(
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+          Text(
+            text = "Veil Pro, on us",
+            style = VeilTextStyles.editorTitle.copy(fontSize = 22.sp, lineHeight = 28.sp),
+            color = colors.text,
+            textAlign = TextAlign.Center
+          )
 
-        Text(
-          text = "Just for you: All Pro Features (Self-Destruct Notes, Inline Calculator, Version History, Copyable Prompt Blocks & more) are unlocked free forever.",
-          style = VeilTextStyles.cardBody.copy(fontSize = 14.5.sp, lineHeight = 21.sp),
-          color = colors.muted,
-          textAlign = TextAlign.Center
-        )
+          Text(
+            text = "100% off, forever. All Pro features are open.",
+            style = VeilTextStyles.cardBody.copy(fontSize = 14.5.sp, lineHeight = 20.sp),
+            color = colors.muted,
+            textAlign = TextAlign.Center
+          )
+        }
 
-        Spacer(modifier = Modifier.height(4.dp))
+        FlowRow(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+          horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+          verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+          featurePills.forEach { label ->
+            Box(
+              modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(colors.accentSoft)
+                .border(1.dp, colors.accent.copy(alpha = 0.22f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 11.dp, vertical = 6.dp)
+            ) {
+              Text(
+                text = label,
+                style = VeilTextStyles.labelChip.copy(fontSize = 12.sp, fontWeight = FontWeight.Medium),
+                color = colors.text
+              )
+            }
+          }
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
 
         Box(
           modifier = Modifier
@@ -699,7 +720,7 @@ fun ProGiftModalDialog(
           contentAlignment = Alignment.Center
         ) {
           Text(
-            text = "Claim Free Pro ✨",
+            text = "Claim free Pro",
             style = VeilTextStyles.cardTitle.copy(fontSize = 15.5.sp, fontWeight = FontWeight.SemiBold),
             color = Color.White
           )
@@ -713,7 +734,7 @@ fun ProGiftModalDialog(
             .testTag("pro_gift_maybe_later_button")
         ) {
           Text(
-            text = "Maybe Later",
+            text = "Maybe later",
             style = VeilTextStyles.cardBody.copy(fontWeight = FontWeight.Medium),
             color = colors.muted
           )
@@ -832,12 +853,12 @@ fun ConfettiCelebrationOverlay(
 
     AnimatedVisibility(
       visible = showUnlockedToast,
-      enter = fadeIn(tween(180)) + slideInVertically { -40 },
-      exit = fadeOut(tween(220)) + slideOutVertically { -40 },
+      enter = fadeIn(tween(180)) + slideInVertically { 48 },
+      exit = fadeOut(tween(220)) + slideOutVertically { 48 },
       modifier = Modifier
-        .align(Alignment.TopCenter)
-        .statusBarsPadding()
-        .padding(top = 14.dp, start = 20.dp, end = 20.dp)
+        .align(Alignment.BottomCenter)
+        .navigationBarsPadding()
+        .padding(bottom = 24.dp, start = 20.dp, end = 20.dp)
     ) {
       val shape = RoundedCornerShape(24.dp)
       Row(

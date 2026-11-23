@@ -1287,4 +1287,92 @@ object VeilIcons {
       drawPath(handle, tint, style = stroke)
     }
   }
+
+  @Composable
+  fun CrownOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 24.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 2.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      val crown = Path().apply {
+        moveTo(3.5f * s, 17.5f * s)
+        lineTo(5f * s, 7.5f * s)
+        lineTo(9.2f * s, 11.5f * s)
+        lineTo(12f * s, 5.5f * s)
+        lineTo(14.8f * s, 11.5f * s)
+        lineTo(19f * s, 7.5f * s)
+        lineTo(20.5f * s, 17.5f * s)
+        close()
+      }
+      drawPath(crown, tint, style = stroke)
+      drawLine(
+        tint,
+        Offset(4.5f * s, 20f * s),
+        Offset(19.5f * s, 20f * s),
+        strokeWidth = strokePx,
+        cap = StrokeCap.Round
+      )
+    }
+  }
+
+  @Composable
+  fun GiftOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 22.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 1.9.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      drawRoundRect(
+        tint,
+        Offset(3.5f * s, 8.5f * s),
+        Size(17f * s, 3.8f * s),
+        CornerRadius(1.5f * s, 1.5f * s),
+        style = stroke
+      )
+      val box = Path().apply {
+        moveTo(5f * s, 12.3f * s)
+        lineTo(5f * s, 19.5f * s)
+        lineTo(19f * s, 19.5f * s)
+        lineTo(19f * s, 12.3f * s)
+      }
+      drawPath(box, tint, style = stroke)
+      drawLine(tint, Offset(12f * s, 8.5f * s), Offset(12f * s, 19.5f * s), strokeWidth = strokePx, cap = StrokeCap.Round)
+      val leftBow = Path().apply {
+        moveTo(12f * s, 8.5f * s)
+        cubicTo(11f * s, 5f * s, 7f * s, 4.5f * s, 7f * s, 6.8f * s)
+        cubicTo(7f * s, 8.2f * s, 9.5f * s, 8.5f * s, 12f * s, 8.5f * s)
+      }
+      val rightBow = Path().apply {
+        moveTo(12f * s, 8.5f * s)
+        cubicTo(13f * s, 5f * s, 17f * s, 4.5f * s, 17f * s, 6.8f * s)
+        cubicTo(17f * s, 8.2f * s, 14.5f * s, 8.5f * s, 12f * s, 8.5f * s)
+      }
+      drawPath(leftBow, tint, style = stroke)
+      drawPath(rightBow, tint, style = stroke)
+    }
+  }
+
+  @Composable
+  fun SelectAllOutline(tint: Color, modifier: Modifier = Modifier, size: Dp = 20.dp) {
+    Canvas(modifier = modifier.size(size)) {
+      val s = this.size.width / 24f
+      val strokePx = 2.dp.toPx()
+      val stroke = Stroke(width = strokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+      // Dashed-corner square frame
+      val tl = Path().apply { moveTo(4f * s, 8.5f * s); lineTo(4f * s, 5.5f * s); quadraticTo(4f * s, 4f * s, 5.5f * s, 4f * s); lineTo(8.5f * s, 4f * s) }
+      val tr = Path().apply { moveTo(15.5f * s, 4f * s); lineTo(18.5f * s, 4f * s); quadraticTo(20f * s, 4f * s, 20f * s, 5.5f * s); lineTo(20f * s, 8.5f * s) }
+      val bl = Path().apply { moveTo(4f * s, 15.5f * s); lineTo(4f * s, 18.5f * s); quadraticTo(4f * s, 20f * s, 5.5f * s, 20f * s); lineTo(8.5f * s, 20f * s) }
+      val br = Path().apply { moveTo(15.5f * s, 20f * s); lineTo(18.5f * s, 20f * s); quadraticTo(20f * s, 20f * s, 20f * s, 18.5f * s); lineTo(20f * s, 15.5f * s) }
+      drawPath(tl, tint, style = stroke)
+      drawPath(tr, tint, style = stroke)
+      drawPath(bl, tint, style = stroke)
+      drawPath(br, tint, style = stroke)
+      // Checkmark inside
+      val check = Path().apply {
+        moveTo(8.2f * s, 12.2f * s)
+        lineTo(10.8f * s, 14.8f * s)
+        lineTo(15.8f * s, 9.2f * s)
+      }
+      drawPath(check, tint, style = stroke)
+    }
+  }
 }

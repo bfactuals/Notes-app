@@ -162,6 +162,9 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
   val starNudgeDismissed: StateFlow<Boolean> = preferences.starNudgeDismissed
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
+  val giftProMilestoneDismissed: StateFlow<Boolean> = preferences.giftProMilestoneDismissed
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
+
   val allLabels: StateFlow<List<String>> = combine(
     repository.activeNotes,
     repository.archivedNotes,
@@ -299,6 +302,10 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
     viewModelScope.launch { preferences.dismissStarNudge() }
   }
 
+  fun dismissGiftProMilestone() {
+    viewModelScope.launch { preferences.dismissGiftProMilestone() }
+  }
+
   fun dismissOptionalUpdate() {
     if (!_isMandatoryUpdate.value) {
       _isOptionalUpdateDismissed.value = true
@@ -395,10 +402,12 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
       val lines = trimmed.lines().map { it.trim() }.filter { it.isNotEmpty() }
       val autoTitle = if (lines.size > 1 && lines.first().length <= 60) lines.first() else ""
       val autoContent = if (autoTitle.isNotEmpty()) trimmed.substringAfter("\n").trim() else trimmed
+      val nextSortOrder = repository.getMinSortOrder() - 1
       val newNote = NoteEntity(
         title = autoTitle,
         content = autoContent,
         color = defaultCol,
+        sortOrder = nextSortOrder,
         createdAt = now,
         updatedAt = now
       )
@@ -425,8 +434,8 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
           appendLine("• Use Read Mode from the editor menu for distraction-free scrolling with clickable links.")
           appendLine()
           appendLine("2. Secret Vault Instructions")
-          appendLine("• Create Secret Code: Open Settings and tap \"Version 1.0\" 5 times rapidly.")
-          appendLine("• Change Secret Code: Once set, 5 taps does nothing — tap \"Version 1.0\" 7 times rapidly and verify your old code first.")
+          appendLine("• Create Secret Code: Open Settings and tap \"Version 1.1\" 5 times rapidly.")
+          appendLine("• Change Secret Code: Once set, 5 taps does nothing — tap \"Version 1.1\" 7 times rapidly and verify your old code first.")
           appendLine("• Silently Hide / Unhide a Note: Press and hold (1.5 seconds) on the Pin icon inside any note.")
           appendLine("• Open Hidden Notes: Type your exact Secret Code in the Search Bar and press Enter / Search. Clear the search to hide them again.")
           appendLine("• Encrypted Backups: Exported backups are AES-GCM encrypted and always require your password to open or restore.")
@@ -542,6 +551,17 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
+  fun selectNote(id: Long) {
+    _selectedNoteIds.update { selected -> selected + id }
+  }
+
+  fun selectAllNotes(ids: Collection<Long>) {
+    if (ids.isEmpty()) return
+    _selectedNoteIds.update { selected ->
+      if (ids.all { selected.contains(it) }) emptySet() else ids.toSet()
+    }
+  }
+
   fun clearSelection() {
     _selectedNoteIds.value = emptySet()
   }
@@ -568,6 +588,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
 
   fun updateCustomNoteOrder(orderedIds: List<Long>) {
     viewModelScope.launch {
+      repository.updateNotePositions(orderedIds)
       preferences.setSortOrder("custom")
       preferences.setCustomNoteOrder(orderedIds)
     }
@@ -672,6 +693,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
       parsedLabels.forEach { preferences.addSavedLabel(it) }
 
       if (id == 0L) {
+        val nextSortOrder = repository.getMinSortOrder() - 1
         val note = NoteEntity(
           title = title,
           content = content,
@@ -681,6 +703,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
           labels = parsedLabels.joinToString(", "),
           checklistJson = checklistJson,
           reminderTime = reminderTime,
+          sortOrder = nextSortOrder,
           createdAt = now,
           updatedAt = now
         )
@@ -863,9 +886,11 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
   fun duplicateNote(note: NoteEntity) {
     viewModelScope.launch {
       val now = System.currentTimeMillis()
+      val nextSortOrder = repository.getMinSortOrder() - 1
       val copy = note.copy(
         id = 0L,
         title = if (note.title.isNotBlank()) "${note.title} (Copy)" else "",
+        sortOrder = nextSortOrder,
         createdAt = now,
         updatedAt = now
       )
@@ -890,6 +915,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
   ) {
     viewModelScope.launch {
       val now = System.currentTimeMillis()
+      val nextSortOrder = repository.getMinSortOrder() - 1
       val copy = NoteEntity(
         id = 0L,
         title = if (title.isNotBlank()) "$title (Copy)" else "",
@@ -900,6 +926,7 @@ class VeilViewModel(application: Application) : AndroidViewModel(application) {
         labels = labels,
         checklistJson = checklistJson,
         reminderTime = reminderTime,
+        sortOrder = nextSortOrder,
         createdAt = now,
         updatedAt = now
       )

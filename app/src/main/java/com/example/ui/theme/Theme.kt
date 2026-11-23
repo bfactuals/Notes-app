@@ -159,12 +159,15 @@ fun VeilTheme(
     object : HapticFeedback {
       override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {
         if (!hapticEnabled) return
+        if (!view.isHapticFeedbackEnabled) {
+          view.isHapticFeedbackEnabled = true
+        }
         val constant = when (hapticFeedbackType) {
           HapticFeedbackType.LongPress -> HapticFeedbackConstants.LONG_PRESS
           HapticFeedbackType.TextHandleMove -> HapticFeedbackConstants.CLOCK_TICK
-          else -> HapticFeedbackConstants.CONTEXT_CLICK
+          else -> HapticFeedbackConstants.KEYBOARD_TAP
         }
-        view.performHapticFeedback(constant)
+        view.performHapticFeedback(constant, HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING)
       }
     }
   }
